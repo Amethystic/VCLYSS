@@ -28,7 +28,7 @@ namespace HardAntiCheat
     #endregion
 
 	[BepInPlugin(ModInfo.GUID, ModInfo.NAME, ModInfo.VERSION)]
-	[BepInDependency("Marioalexsan.PerfectGuard", BepInDependency.DependencyFlags.HardDependency)]
+	[BepInDependency("Marioalexsan.PerfectGuard", BepInDependency.DependencyFlags.SoftDependency)]
 	public class Main : BaseUnityPlugin
 	{
 		internal static ManualLogSource Log;
@@ -57,6 +57,8 @@ namespace HardAntiCheat
 		public static readonly Dictionary<uint, PlayerStatsData> ServerPlayerStats = new Dictionary<uint, PlayerStatsData>();
 		public static readonly Dictionary<uint, PlayerAirborneData> ServerPlayerAirborneStates = new Dictionary<uint, PlayerAirborneData>();
 		public static readonly Dictionary<uint, int> ServerPlayerInfractionCount = new Dictionary<uint, int>();
+		// NEW: Tracks the end time of a player's spawn grace period.
+		public static readonly Dictionary<uint, float> ServerPlayerGracePeriod = new Dictionary<uint, float>();
 		private readonly Harmony harmony = new Harmony(ModInfo.GUID);
 
 		private void Awake()
@@ -117,7 +119,7 @@ namespace HardAntiCheat
 
 					string punishmentDetails = $"Player {playerName} (ID: {playerID}) was automatically {action.ToUpper()}ed for reaching {currentInfractions}/{maxInfractions} infractions.";
 
-					Log.LogWarning(punishmentDetails); // Log the action to console
+					Log.LogWarning(punishmentDetails);
 					try { File.AppendAllText(InfractionLogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [PUNISHMENT] " + punishmentDetails + Environment.NewLine); }
 					catch (Exception ex) { Log.LogError($"Failed to write punishment to log: {ex.Message}"); }
 
@@ -128,17 +130,34 @@ namespace HardAntiCheat
 		}
 	}
 
+    #region Player Spawn Grace Period
+	[HarmonyPatch(typeof (PlayerMove), "Start")]
+	public static class PlayerSpawnPatch
+	{
+		private const float GRACE_PERIOD_SECONDS = 3.0f;
+
+		public static void Postfix(PlayerMove __instance)
+		{
+			if (!NetworkServer.active) return;
+
+			// Give the player a 3-second grace period from movement checks when they spawn.
+			Main.ServerPlayerGracePeriod[__instance.netId] = Time.time + GRACE_PERIOD_SECONDS;
+			Main.Log.LogInfo($"Player (netId: {__instance.netId}) has spawned. Applying movement check grace period for {GRACE_PERIOD_SECONDS} seconds.");
+		}
+	}
+    #endregion
+
     #region Server Authority Protection (Self-Revive)
 	[HarmonyPatch]
 	public static class ServerAuthorityValidationPatch
 	{
 		[HarmonyPatch(typeof (StatusEntity), "Cmd_RevivePlayer")]
 		[HarmonyPrefix]
-		public static bool ValidateRevive(StatusEntity __instance, Player _targetPlayer)
+		public static bool ValidateRevive(StatusEntity __instance, Player _p)
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableReviveChecks.Value) return true;
 			if (Main.DisableForHost.Value && __instance.isServer && __instance.isClient) return true;
-			if (__instance.netId == _targetPlayer.netId)
+			if (__instance.netId == _p.netId)
 			{
 				Main.LogInfraction(__instance, "Unauthorized Action (Self-Revive)", $"Player attempted to revive themselves. Blocked.");
 				return false;
@@ -190,7 +209,24 @@ namespace HardAntiCheat
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || AtlyssNetworkManager._current._soloMode) return;
 			if (Main.DisableForHost.Value && __instance.isServer && __instance.isClient) return;
+
+			// --- NEW: Check if the player is in their grace period ---
 			uint netId = __instance.netId;
+			if (Main.ServerPlayerGracePeriod.TryGetValue(netId, out float gracePeriodEndTime))
+			{
+				if (Time.time < gracePeriodEndTime)
+				{
+					// Still in grace period, skip all movement checks.
+					return;
+				}
+				else
+				{
+					// Grace period is over, remove them from the list.
+					Main.ServerPlayerGracePeriod.Remove(netId);
+					Main.Log.LogInfo($"Grace period for Player (netId: {netId}) has ended. Resuming movement checks.");
+				}
+			}
+
 			Vector3 currentPosition = __instance.transform.position;
 			if (Main.EnableMovementChecks.Value)
 			{
@@ -249,31 +285,31 @@ namespace HardAntiCheat
 		private const int MAX_PLAUSIBLE_CURRENCY_GAIN = 50000;
 		[HarmonyPatch(typeof (PlayerInventory), "Cmd_AddCurrency")]
 		[HarmonyPrefix]
-		public static bool ValidateCurrencyAdd(NetworkBehaviour __instance, int amount)
+		public static bool ValidateCurrencyAdd(NetworkBehaviour __instance, int _value)
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableCurrencyChecks.Value) return true;
 			if (Main.DisableForHost.Value && __instance.isServer && __instance.isClient) return true;
-			if (amount > MAX_PLAUSIBLE_CURRENCY_GAIN)
+			if (_value > MAX_PLAUSIBLE_CURRENCY_GAIN)
 			{
-				Main.LogInfraction(__instance, "Currency Manipulation", $"Attempted to add {amount} currency at once. Blocked.");
+				Main.LogInfraction(__instance, "Currency Manipulation", $"Attempted to add {_value} currency at once. Blocked.");
 				return false;
 			}
-			if (amount < 0)
+			if (_value < 0)
 			{
-				Main.LogInfraction(__instance, "Currency Manipulation", $"Attempted to add a negative amount ({amount}). Blocked.");
+				Main.LogInfraction(__instance, "Currency Manipulation", $"Attempted to add a negative amount ({_value}). Blocked.");
 				return false;
 			}
 			return true;
 		}
 		[HarmonyPatch(typeof (PlayerInventory), "Cmd_SubtractCurrency")]
 		[HarmonyPrefix]
-		public static bool ValidateCurrencySubtract(NetworkBehaviour __instance, int amount)
+		public static bool ValidateCurrencySubtract(NetworkBehaviour __instance, int _value)
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableCurrencyChecks.Value) return true;
 			if (Main.DisableForHost.Value && __instance.isServer && __instance.isClient) return true;
-			if (amount < 0)
+			if (_value < 0)
 			{
-				Main.LogInfraction(__instance, "Currency Manipulation", $"Attempted to subtract a negative amount ({amount}). Blocked.");
+				Main.LogInfraction(__instance, "Currency Manipulation", $"Attempted to subtract a negative amount ({_value}). Blocked.");
 				return false;
 			}
 			return true;
@@ -457,6 +493,7 @@ namespace HardAntiCheat
 				Main.ServerPlayerStats.Remove(netId);
 				Main.ServerPlayerAirborneStates.Remove(netId);
 				Main.ServerPlayerInfractionCount.Remove(netId);
+				Main.ServerPlayerGracePeriod.Remove(netId); // NEW
 			}
 		}
 	}
