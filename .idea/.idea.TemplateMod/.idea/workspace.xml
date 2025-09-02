@@ -8,12 +8,9 @@
       <change beforePath="$PROJECT_DIR$/HardAntiCheat/Main.cs" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/Main.cs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/HardAntiCheat/_ThunderstoreBuild/s0apy-HardAntiCheat-1.0.0.zip" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/_ThunderstoreBuild/s0apy-HardAntiCheat-1.0.0.zip" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/HardAntiCheat/bin/Debug/netstandard2.1/HardAntiCheat.dll" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/bin/Debug/netstandard2.1/HardAntiCheat.dll" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/HardAntiCheat/bin/Debug/netstandard2.1/_ThunderstoreBuild/CHANGELOG.md" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/bin/Debug/netstandard2.1/_ThunderstoreBuild/CHANGELOG.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/HardAntiCheat/bin/Debug/netstandard2.1/_ThunderstoreBuild/HardAntiCheat.dll" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/bin/Debug/netstandard2.1/_ThunderstoreBuild/HardAntiCheat.dll" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/HardAntiCheat/bin/Debug/netstandard2.1/_ThunderstoreBuild/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/bin/Debug/netstandard2.1/_ThunderstoreBuild/README.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.AssemblyInfo.cs" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.AssemblyInfo.cs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.AssemblyInfoInputs.cache" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.AssemblyInfoInputs.cache" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.csproj.AssemblyReference.cache" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.csproj.AssemblyReference.cache" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.dll" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.dll" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.sourcelink.json" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.sourcelink.json" afterDir="false" />
     </list>
@@ -50,18 +47,21 @@
     &quot;assignee&quot;: &quot;Amethystic&quot;
   }
 }</component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "https://github.com/Amethystic/HardAntiCheat.git",
-    "accountId": "ba5133cd-f2bb-43fd-8e9f-f2d9dd32bec0"
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/Amethystic/HardAntiCheat.git&quot;,
+    &quot;accountId&quot;: &quot;ba5133cd-f2bb-43fd-8e9f-f2d9dd32bec0&quot;
   }
-}]]></component>
+}</component>
   <component name="HighlightingSettingsPerFile">
     <setting file="file://$APPLICATION_CONFIG_DIR$/resharper-host/DecompilerCache/decompiler/4141394f5ed544ad813947f5d2ae5b4111a200/45/b9139174/ChatBehaviour.cs" root0="FORCE_HIGHLIGHTING" />
+    <setting file="file://$APPLICATION_CONFIG_DIR$/resharper-host/DecompilerCache/decompiler/4141394f5ed544ad813947f5d2ae5b4111a200/5b/94c44026/PlayerStats.cs" root0="SKIP_HIGHLIGHTING" />
     <setting file="file://$APPLICATION_CONFIG_DIR$/resharper-host/DecompilerCache/decompiler/4141394f5ed544ad813947f5d2ae5b4111a200/92/4ad3cbd2/AtlyssNetworkManager.cs" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$APPLICATION_CONFIG_DIR$/resharper-host/DecompilerCache/decompiler/4141394f5ed544ad813947f5d2ae5b4111a200/a9/f726dace/HostConsole.cs" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$APPLICATION_CONFIG_DIR$/resharper-host/DecompilerCache/decompiler/4141394f5ed544ad813947f5d2ae5b4111a200/c2/460fcd51/InGameUI.cs" root0="SKIP_HIGHLIGHTING" />
     <setting file="file://$APPLICATION_CONFIG_DIR$/resharper-host/DecompilerCache/decompiler/4141394f5ed544ad813947f5d2ae5b4111a200/c3/025ce230/PlayerMove.cs" root0="FORCE_HIGHLIGHTING" />
+    <setting file="file://$APPLICATION_CONFIG_DIR$/resharper-host/DecompilerCache/decompiler/4141394f5ed544ad813947f5d2ae5b4111a200/d7/8ed4204a/PlayerInventory.cs" root0="SKIP_HIGHLIGHTING" />
+    <setting file="file://$APPLICATION_CONFIG_DIR$/resharper-host/DecompilerCache/decompiler/4141394f5ed544ad813947f5d2ae5b4111a200/ea/af30f3b9/PlayerCasting.cs" root0="SKIP_HIGHLIGHTING" />
     <setting file="file://$APPLICATION_CONFIG_DIR$/resharper-host/DecompilerCache/decompiler/4141394f5ed544ad813947f5d2ae5b4111a200/f7/f471e99d/Player.cs" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$APPLICATION_CONFIG_DIR$/resharper-host/DecompilerCache/decompiler/6a18188ce6264976a9218286caeb57f41ea00/7e/8f49ac37/ManualLogSource.cs" root0="FORCE_HIGHLIGHTING" />
     <setting file="file://$APPLICATION_CONFIG_DIR$/resharper-host/DecompilerCache/decompiler/f9e999dfe7bb429891b663659eb3f7eb2de00/79/a7e3db6b/NetworkBehaviour.cs" root0="SKIP_HIGHLIGHTING" />
@@ -131,7 +131,7 @@
       <workItem from="1756024057042" duration="612000" />
       <workItem from="1756026032827" duration="1023000" />
       <workItem from="1756045536372" duration="668000" />
-      <workItem from="1756769260458" duration="5426000" />
+      <workItem from="1756769260458" duration="7485000" />
     </task>
     <task id="LOCAL-00001" summary="1.0.9">
       <option name="closed" value="true" />
@@ -485,7 +485,15 @@
       <option name="project" value="LOCAL" />
       <updated>1756773965705</updated>
     </task>
-    <option name="localTasksCounter" value="45" />
+    <task id="LOCAL-00045" summary="Alots of stuff">
+      <option name="closed" value="true" />
+      <created>1756774818267</created>
+      <option name="number" value="00045" />
+      <option name="presentableId" value="LOCAL-00045" />
+      <option name="project" value="LOCAL" />
+      <updated>1756774818267</updated>
+    </task>
+    <option name="localTasksCounter" value="46" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -498,7 +506,6 @@
   </component>
   <component name="VcsManagerConfiguration">
     <option name="CLEAR_INITIAL_COMMIT_MESSAGE" value="true" />
-    <MESSAGE value="might have found universial fix" />
     <MESSAGE value="this works as fine" />
     <MESSAGE value="updated" />
     <MESSAGE value="nevermind" />
@@ -523,7 +530,8 @@
     <MESSAGE value="oops" />
     <MESSAGE value="should fix issue with the names n shit idk lol" />
     <MESSAGE value="Danm" />
-    <option name="LAST_COMMIT_MESSAGE" value="Danm" />
+    <MESSAGE value="Alots of stuff" />
+    <option name="LAST_COMMIT_MESSAGE" value="Alots of stuff" />
     <option name="OPTIMIZE_IMPORTS_BEFORE_PROJECT_COMMIT" value="true" />
     <option name="REFORMAT_BEFORE_PROJECT_COMMIT" value="true" />
     <option name="REARRANGE_BEFORE_PROJECT_COMMIT" value="true" />

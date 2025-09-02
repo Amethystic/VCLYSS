@@ -57,8 +57,8 @@ namespace HardAntiCheat
 		public static readonly Dictionary<uint, PlayerStatsData> ServerPlayerStats = new Dictionary<uint, PlayerStatsData>();
 		public static readonly Dictionary<uint, PlayerAirborneData> ServerPlayerAirborneStates = new Dictionary<uint, PlayerAirborneData>();
 		public static readonly Dictionary<uint, int> ServerPlayerInfractionCount = new Dictionary<uint, int>();
-		// NEW: Tracks the end time of a player's spawn grace period.
 		public static readonly Dictionary<uint, float> ServerPlayerGracePeriod = new Dictionary<uint, float>();
+		public static readonly Dictionary<uint, int> ServerPlayerCurrency = new Dictionary<uint, int>();
 		private readonly Harmony harmony = new Harmony(ModInfo.GUID);
 
 		private void Awake()
@@ -73,8 +73,8 @@ namespace HardAntiCheat
 			EnableAirborneChecks = Config.Bind("2. Movement Detections", "Enable Fly/Infinite Jump Checks", true, "Checks if players are airborne for an impossibly long time.");
 			EnableSpeedChecks = Config.Bind("2. Movement Detections", "Enable Max MoveSpeed Check", true, "Prevents players from setting their base movement speed stat to illegal values.");
 
-			EnableCurrencyChecks = Config.Bind("3. Economy Detections", "Enable Currency Checks", true, "Prevents players from adding impossibly large amounts of currency at once.");
-			EnableItemChecks = Config.Bind("3. Economy Detections", "Enable Item Enchantment Checks", true, "Prevents players from applying illegal enchantments/modifiers to their items.");
+			EnableCurrencyChecks = Config.Bind("3. Economy Detections", "Enable Currency Checks", true, "Prevents players from adding impossibly large amounts of currency at once and corrects any invalid currency totals.");
+			EnableItemChecks = Config.Bind("3. Economy Detections", "Enable Item Enchantment Checks", true, "Prevents players from applying illegal enchantments/modifiers to their items by reverting them.");
 
 			EnableExperienceChecks = Config.Bind("4. Stat Detections", "Enable Experience/Level Checks", true, "Prevents players from gaining huge amounts of XP or multiple levels at once.");
 
@@ -116,13 +116,10 @@ namespace HardAntiCheat
 					string action = ActionType.Value.ToLower();
 					int connectionId = player.connectionToClient.connectionId;
 					string command = action == "kick" ? $"/kick {connectionId}" : $"/ban {connectionId}";
-
 					string punishmentDetails = $"Player {playerName} (ID: {playerID}) was automatically {action.ToUpper()}ed for reaching {currentInfractions}/{maxInfractions} infractions.";
-
 					Log.LogWarning(punishmentDetails);
 					try { File.AppendAllText(InfractionLogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [PUNISHMENT] " + punishmentDetails + Environment.NewLine); }
 					catch (Exception ex) { Log.LogError($"Failed to write punishment to log: {ex.Message}"); }
-
 					HostConsole._current.Init_ServerMessage(command);
 					ServerPlayerInfractionCount.Remove(netId);
 				}
@@ -135,12 +132,9 @@ namespace HardAntiCheat
 	public static class PlayerSpawnPatch
 	{
 		private const float GRACE_PERIOD_SECONDS = 3.0f;
-
 		public static void Postfix(PlayerMove __instance)
 		{
 			if (!NetworkServer.active) return;
-
-			// Give the player a 3-second grace period from movement checks when they spawn.
 			Main.ServerPlayerGracePeriod[__instance.netId] = Time.time + GRACE_PERIOD_SECONDS;
 			Main.Log.LogInfo($"Player (netId: {__instance.netId}) has spawned. Applying movement check grace period for {GRACE_PERIOD_SECONDS} seconds.");
 		}
@@ -210,18 +204,15 @@ namespace HardAntiCheat
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || AtlyssNetworkManager._current._soloMode) return;
 			if (Main.DisableForHost.Value && __instance.isServer && __instance.isClient) return;
 
-			// --- NEW: Check if the player is in their grace period ---
 			uint netId = __instance.netId;
 			if (Main.ServerPlayerGracePeriod.TryGetValue(netId, out float gracePeriodEndTime))
 			{
 				if (Time.time < gracePeriodEndTime)
 				{
-					// Still in grace period, skip all movement checks.
 					return;
 				}
 				else
 				{
-					// Grace period is over, remove them from the list.
 					Main.ServerPlayerGracePeriod.Remove(netId);
 					Main.Log.LogInfo($"Grace period for Player (netId: {netId}) has ended. Resuming movement checks.");
 				}
@@ -278,20 +269,21 @@ namespace HardAntiCheat
 	}
     #endregion
 
-    #region Currency Manipulation Protection
+    #region Currency & Item Audit Protection
 	[HarmonyPatch]
-	public static class CurrencyValidationPatch
+	public static class AuditAndValidationPatch
 	{
 		private const int MAX_PLAUSIBLE_CURRENCY_GAIN = 50000;
+
 		[HarmonyPatch(typeof (PlayerInventory), "Cmd_AddCurrency")]
 		[HarmonyPrefix]
-		public static bool ValidateCurrencyAdd(NetworkBehaviour __instance, int _value)
+		public static bool ValidateCurrencyAdd(PlayerInventory __instance, int _value)
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableCurrencyChecks.Value) return true;
 			if (Main.DisableForHost.Value && __instance.isServer && __instance.isClient) return true;
 			if (_value > MAX_PLAUSIBLE_CURRENCY_GAIN)
 			{
-				Main.LogInfraction(__instance, "Currency Manipulation", $"Attempted to add {_value} currency at once. Blocked.");
+				Main.LogInfraction(__instance, "Currency Manipulation", $"Attempted to add an impossibly large amount ({_value}). Blocked.");
 				return false;
 			}
 			if (_value < 0)
@@ -301,9 +293,18 @@ namespace HardAntiCheat
 			}
 			return true;
 		}
+
+		[HarmonyPatch(typeof (PlayerInventory), "Cmd_AddCurrency")]
+		[HarmonyPostfix]
+		public static void UpdateServerCurrencyOnAdd(PlayerInventory __instance, int _value)
+		{
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableCurrencyChecks.Value) return;
+			if (Main.ServerPlayerCurrency.ContainsKey(__instance.netId)) { Main.ServerPlayerCurrency[__instance.netId] += _value; }
+		}
+
 		[HarmonyPatch(typeof (PlayerInventory), "Cmd_SubtractCurrency")]
 		[HarmonyPrefix]
-		public static bool ValidateCurrencySubtract(NetworkBehaviour __instance, int _value)
+		public static bool ValidateCurrencySubtract(PlayerInventory __instance, int _value)
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableCurrencyChecks.Value) return true;
 			if (Main.DisableForHost.Value && __instance.isServer && __instance.isClient) return true;
@@ -312,43 +313,74 @@ namespace HardAntiCheat
 				Main.LogInfraction(__instance, "Currency Manipulation", $"Attempted to subtract a negative amount ({_value}). Blocked.");
 				return false;
 			}
-			return true;
-		}
-	}
-    #endregion
-
-    #region Item Enchantment Protection
-	[HarmonyPatch(typeof (PlayerInventory), "CmdUpdateItem")]
-	public static class ItemEnchantValidationPatch
-	{
-		public static bool Prefix(NetworkBehaviour __instance, ItemData updatedItem)
-		{
-			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableItemChecks.Value) return true;
-			if (Main.DisableForHost.Value && __instance.isServer && __instance.isClient) return true;
-			ScriptableEquipment baseItemBlueprint = GameManager._current.Locate_Item(updatedItem._itemName) as ScriptableEquipment;
-			if (baseItemBlueprint == null)
+			if (Main.ServerPlayerCurrency.TryGetValue(__instance.netId, out int serverBalance) && _value > serverBalance)
 			{
-				Main.LogInfraction(__instance, "Item Manipulation", $"Sent update for unknown item name: {updatedItem._itemName}. Blocked.");
+				Main.LogInfraction(__instance, "Currency Manipulation", $"Attempted to subtract more currency ({_value}) than they have ({serverBalance}). Blocked.");
 				return false;
 			}
-			if (updatedItem._modifierID != 0)
+			return true;
+		}
+
+		[HarmonyPatch(typeof (PlayerInventory), "Cmd_SubtractCurrency")]
+		[HarmonyPostfix]
+		public static void UpdateServerCurrencyOnSubtract(PlayerInventory __instance, int _value)
+		{
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableCurrencyChecks.Value) return;
+			if (Main.ServerPlayerCurrency.ContainsKey(__instance.netId)) { Main.ServerPlayerCurrency[__instance.netId] -= _value; }
+		}
+
+		[HarmonyPatch(typeof (PlayerInventory), "Update")]
+		[HarmonyPostfix]
+		public static void AuditInventoryState(PlayerInventory __instance)
+		{
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || AtlyssNetworkManager._current._soloMode) return;
+			if (Main.DisableForHost.Value && __instance.isServer && __instance.isClient) return;
+
+			if (Main.EnableCurrencyChecks.Value)
 			{
-				bool isValidModifier = false;
-				foreach (var legalModifierSlot in baseItemBlueprint._statModifierTable._statModifierSlots)
+				uint netId = __instance.netId;
+				int clientReportedCurrency = __instance._heldCurrency;
+
+				if (!Main.ServerPlayerCurrency.ContainsKey(netId)) { Main.ServerPlayerCurrency[netId] = clientReportedCurrency; }
+				else
 				{
-					if (legalModifierSlot._equipModifier._modifierID == updatedItem._modifierID)
+					int serverAuthoritativeCurrency = Main.ServerPlayerCurrency[netId];
+					if (clientReportedCurrency != serverAuthoritativeCurrency)
 					{
-						isValidModifier = true;
-						break;
+						Main.LogInfraction(__instance, "Currency Desync / Manipulation", $"Client currency ({clientReportedCurrency}) did not match server record ({serverAuthoritativeCurrency}). Reverting.");
+						__instance.Network_heldCurrency = serverAuthoritativeCurrency;
 					}
 				}
-				if (!isValidModifier)
+			}
+
+			if (Main.EnableItemChecks.Value)
+			{
+				foreach (ItemData item in __instance._heldItems)
 				{
-					Main.LogInfraction(__instance, "Item Manipulation (Enchant)", $"Attempted illegal modifier ID ({updatedItem._modifierID}) on item {updatedItem._itemName}. Blocked.");
-					return false;
+					if (item == null || !item._isEquipped) continue;
+
+					ScriptableEquipment baseItemBlueprint = GameManager._current.Locate_Item(item._itemName) as ScriptableEquipment;
+					if (baseItemBlueprint == null) continue;
+
+					if (item._modifierID != 0)
+					{
+						bool isValidModifier = false;
+						foreach (var legalModifierSlot in baseItemBlueprint._statModifierTable._statModifierSlots)
+						{
+							if (legalModifierSlot._equipModifier._modifierID == item._modifierID)
+							{
+								isValidModifier = true;
+								break;
+							}
+						}
+						if (!isValidModifier)
+						{
+							Main.LogInfraction(__instance, "Item Manipulation (Enchant Audit)", $"Found illegal modifier ID ({item._modifierID}) on equipped item {item._itemName}. Reverting.");
+							item._modifierID = 0;
+						}
+					}
 				}
 			}
-			return true;
 		}
 	}
     #endregion
@@ -493,7 +525,8 @@ namespace HardAntiCheat
 				Main.ServerPlayerStats.Remove(netId);
 				Main.ServerPlayerAirborneStates.Remove(netId);
 				Main.ServerPlayerInfractionCount.Remove(netId);
-				Main.ServerPlayerGracePeriod.Remove(netId); // NEW
+				Main.ServerPlayerGracePeriod.Remove(netId);
+				Main.ServerPlayerCurrency.Remove(netId);
 			}
 		}
 	}
