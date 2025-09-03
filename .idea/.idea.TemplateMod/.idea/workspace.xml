@@ -4,17 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="532a6414-527d-4259-b468-e95e45d60a04" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/.idea.TemplateMod/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/.idea.TemplateMod/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/HardAntiCheat/Main.cs" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/Main.cs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/HardAntiCheat/_ThunderstoreBuild/s0apy-HardAntiCheat-1.0.0.zip" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/_ThunderstoreBuild/s0apy-HardAntiCheat-1.0.0.zip" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/HardAntiCheat/bin/Debug/netstandard2.1/HardAntiCheat.dll" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/bin/Debug/netstandard2.1/HardAntiCheat.dll" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/HardAntiCheat/bin/Debug/netstandard2.1/_ThunderstoreBuild/HardAntiCheat.dll" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/bin/Debug/netstandard2.1/_ThunderstoreBuild/HardAntiCheat.dll" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.AssemblyInfo.cs" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.AssemblyInfo.cs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.AssemblyInfoInputs.cache" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.AssemblyInfoInputs.cache" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.dll" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.dll" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.sourcelink.json" beforeDir="false" afterPath="$PROJECT_DIR$/HardAntiCheat/obj/Debug/netstandard2.1/HardAntiCheat.sourcelink.json" afterDir="false" />
-    </list>
+    <list default="true" id="532a6414-527d-4259-b468-e95e45d60a04" name="Changes" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -132,7 +122,7 @@
       <workItem from="1756024057042" duration="612000" />
       <workItem from="1756026032827" duration="1023000" />
       <workItem from="1756045536372" duration="668000" />
-      <workItem from="1756769260458" duration="14671000" />
+      <workItem from="1756769260458" duration="14745000" />
     </task>
     <task id="LOCAL-00001" summary="1.0.9">
       <option name="closed" value="true" />
@@ -510,7 +500,15 @@
       <option name="project" value="LOCAL" />
       <updated>1756780915042</updated>
     </task>
-    <option name="localTasksCounter" value="48" />
+    <task id="LOCAL-00048" summary="finishing off for today">
+      <option name="closed" value="true" />
+      <created>1756788495191</created>
+      <option name="number" value="00048" />
+      <option name="presentableId" value="LOCAL-00048" />
+      <option name="project" value="LOCAL" />
+      <updated>1756788495191</updated>
+    </task>
+    <option name="localTasksCounter" value="49" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -523,7 +521,6 @@
   </component>
   <component name="VcsManagerConfiguration">
     <option name="CLEAR_INITIAL_COMMIT_MESSAGE" value="true" />
-    <MESSAGE value="nevermind" />
     <MESSAGE value="&quot;nevermind&quot; commit" />
     <MESSAGE value="Version 1.1.1" />
     <MESSAGE value="1.1.2" />
@@ -548,7 +545,8 @@
     <MESSAGE value="Alots of stuff" />
     <MESSAGE value="Batch of fixes initiated" />
     <MESSAGE value="so many false positives lol" />
-    <option name="LAST_COMMIT_MESSAGE" value="so many false positives lol" />
+    <MESSAGE value="finishing off for today" />
+    <option name="LAST_COMMIT_MESSAGE" value="finishing off for today" />
     <option name="OPTIMIZE_IMPORTS_BEFORE_PROJECT_COMMIT" value="true" />
     <option name="REFORMAT_BEFORE_PROJECT_COMMIT" value="true" />
     <option name="REARRANGE_BEFORE_PROJECT_COMMIT" value="true" />
