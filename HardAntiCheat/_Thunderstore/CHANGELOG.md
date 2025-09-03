@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.4 - Public Test Update
+- Intelligent Skill cooldown check improvement
+- Should flag speedhack properly now
+
 ## 1.0.3 - Public Test Update
 - Fixed bugs
 
@@ -11,5 +15,4 @@
 - Pushed
 
 ## 1.0.0
-
 - Initial release

@@ -6,6 +6,7 @@ using Mirror;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq; // Added for string.Join
 using UnityEngine;
 
 namespace HardAntiCheat
@@ -56,6 +57,7 @@ namespace HardAntiCheat
         public static readonly Dictionary<uint, PlayerPositionData> ServerPlayerPositions = new Dictionary<uint, PlayerPositionData>();
 		public static readonly Dictionary<uint, PlayerStatsData> ServerPlayerStats = new Dictionary<uint, PlayerStatsData>();
 		public static readonly Dictionary<uint, PlayerAirborneData> ServerPlayerAirborneStates = new Dictionary<uint, PlayerAirborneData>();
+        public static readonly Dictionary<uint, float> ServerPlayerInitialSpeeds = new Dictionary<uint, float>();
 		public static readonly Dictionary<uint, int> ServerPlayerInfractionCount = new Dictionary<uint, int>();
 		public static readonly Dictionary<uint, float> ServerPlayerGracePeriod = new Dictionary<uint, float>();
         public static readonly Dictionary<uint, float> ServerPunishmentCooldown = new Dictionary<uint, float>();
@@ -148,13 +150,72 @@ namespace HardAntiCheat
             ServerPlayerPositions.Remove(netId);
             ServerPlayerStats.Remove(netId);
             ServerPlayerAirborneStates.Remove(netId);
+            ServerPlayerInitialSpeeds.Remove(netId);
             ServerPlayerInfractionCount.Remove(netId);
             ServerPlayerGracePeriod.Remove(netId);
             ServerPunishmentCooldown.Remove(netId);
         }
 	}
+
+    #region Game Data Initialization
+    [HarmonyPatch]
+    public static class InitializationPatch
+    {
+        private static bool areIDsInitialized = false;
+
+        [HarmonyPatch(typeof(GameManager), "Awake")]
+        [HarmonyPostfix]
+        public static void FindHasteID(GameManager __instance)
+        {
+            if (areIDsInitialized) return;
+
+            Main.Log.LogInfo("Attempting to dynamically identify Haste condition IDs...");
+            
+            try
+            {
+                var field = typeof(GameManager).GetField("_cachedScriptableConditions", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (field == null)
+                {
+                    Main.Log.LogError("Failed to find field '_cachedScriptableConditions' in GameManager. Haste check will not work.");
+                    return;
+                }
+
+                var cachedConditions = field.GetValue(__instance) as Dictionary<int, ScriptableCondition>;
+                if (cachedConditions == null || cachedConditions.Count == 0)
+                {
+                    Main.Log.LogError("Could not access the game's condition dictionary or it is empty. Haste check will not work automatically.");
+                    return;
+                }
+
+                foreach (var condition in cachedConditions.Values)
+                {
+                    if (condition != null && condition._conditionName != null && condition._conditionName.ToLower().Contains("haste"))
+                    {
+                        CombatValidationPatch.HASTE_BOON_IDs.Add(condition._ID);
+                        Main.Log.LogInfo($"Found Haste condition: '{condition._conditionName}' with ID: {condition._ID}. Added to anti-cheat.");
+                    }
+                }
+
+                if (CombatValidationPatch.HASTE_BOON_IDs.Count > 0)
+                {
+                    Main.Log.LogInfo("Successfully initialized dynamic Haste IDs.");
+                }
+                else
+                {
+                    Main.Log.LogWarning("Could not find any conditions named 'Haste'. Cooldown checks might be incorrect for hasted players.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Main.Log.LogError($"An error occurred while trying to find Haste IDs. Haste check will not work. Error: {ex.Message}");
+            }
+            
+            areIDsInitialized = true;
+        }
+    }
+    #endregion
     
-    #region Player Spawn Grace Period
+    #region Player Spawn Grace Period & Initial Stats
 	[HarmonyPatch(typeof(PlayerMove), "Start")]
 	public static class PlayerSpawnPatch
 	{
@@ -162,7 +223,17 @@ namespace HardAntiCheat
 		public static void Postfix(PlayerMove __instance)
 		{
 			if (!NetworkServer.active) return;
-			Main.ServerPlayerGracePeriod[__instance.netId] = Time.time + GRACE_PERIOD_SECONDS;
+            uint netId = __instance.netId;
+
+			// Set a grace period to prevent false positives on spawn
+            Main.ServerPlayerGracePeriod[netId] = Time.time + GRACE_PERIOD_SECONDS;
+
+            // Record the player's initial movement speed as the baseline for speed hack checks
+            if (!Main.ServerPlayerInitialSpeeds.ContainsKey(netId))
+            {
+                Main.ServerPlayerInitialSpeeds[netId] = __instance.Network_movSpeed;
+                Main.Log.LogInfo($"[{netId}] Recorded initial move speed: {__instance.Network_movSpeed}");
+            }
 		}
 	}
     #endregion
@@ -225,11 +296,11 @@ namespace HardAntiCheat
 	[HarmonyPatch(typeof(PlayerMove), "Update")]
 	public static class MovementAndAirborneValidationPatch
 	{
-		private const float MAX_EFFECTIVE_SPEED = 120f;
+		private const float MAX_EFFECTIVE_SPEED = 100f;
 		private const float GRACE_BUFFER_DISTANCE = 5.0f;
 		private const float MAX_ALLOWED_AIR_TIME = 10.0f;
         private const int MAX_LEGAL_MAXJUMPS = 3;
-        private const float MAX_LEGAL_MOVESPEED = 40f;
+
 		public static void Postfix(PlayerMove __instance)
 		{
             if (Main.DisableForHost.Value && Util.IsHost(__instance)) return;
@@ -243,11 +314,15 @@ namespace HardAntiCheat
 			
             if (Main.EnableSpeedChecks.Value)
 			{
-				if (__instance._movSpeed > MAX_LEGAL_MOVESPEED)
-				{
-					Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal _movSpeed of {__instance._movSpeed}. Reverting.");
-					__instance.Network_movSpeed = GameManager._current._statLogics._baseMoveSpeed;
-				}
+				if (Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float initialSpeed))
+                {
+                    // Check if the current networked speed is greater than the recorded initial speed.
+                    if (__instance.Network_movSpeed > initialSpeed)
+                    {
+                        Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance.Network_movSpeed}. Reverting to initial speed of {initialSpeed}.");
+                        __instance.Network_movSpeed = initialSpeed;
+                    }
+                }
 			}
 
 			Vector3 currentPosition = __instance.transform.position;
@@ -383,77 +458,24 @@ namespace HardAntiCheat
 	[HarmonyPatch]
 	public static class CombatValidationPatch
 	{
-        private static readonly HashSet<int> HASTE_BOON_IDs = new HashSet<int> { 12, 13 };
-        private const float HASTE_MODIFIER = 0.70f;
+        public static readonly HashSet<int> HASTE_BOON_IDs = new HashSet<int>();
+        private const float HASTE_MODIFIER = 0.35f;
 
         private static bool PlayerHasHaste(PlayerCasting instance)
         {
             StatusEntity statusEntity = instance.GetComponent<StatusEntity>();
             if (statusEntity == null) return false;
 
-            // --- REVERTED TO ORIGINAL, CORRECT LOGIC WITH DEBUGGING ---
-            // Your initial approach was correct. We will add logging to see why it's not working as expected.
-            // Check your BepInEx console when a player casts a skill.
-
-            if (statusEntity._syncConditions.Count > 0)
+            foreach(var condition in statusEntity._syncConditions)
             {
-                string allConditions = "";
-                foreach (var condition in statusEntity._syncConditions)
+                if (HASTE_BOON_IDs.Contains(condition._conditionID))
                 {
-                    allConditions += condition._conditionID + ", ";
-                    if (condition._conditionID != 0 && HASTE_BOON_IDs.Contains(condition._conditionID))
-                    {
-                        Main.Log.LogInfo($"[{instance.netId}] Haste check SUCCESS. Found active Haste ID: {condition._conditionID}. Applying modifier.");
-                        return true;
-                    }
+                    return true;
                 }
-                Main.Log.LogInfo($"[{instance.netId}] Haste check FAIL. Player has conditions ({allConditions.TrimEnd(',', ' ')}), but none are Haste IDs.");
             }
-            else
-            {
-                Main.Log.LogInfo($"[{instance.netId}] Haste check FAIL. Player has no conditions in _syncConditions list.");
-            }
-            
             return false;
         }
 
-		[HarmonyPatch(typeof(PlayerCasting), "Server_CastSkill")]
-		[HarmonyPrefix]
-		public static bool ValidateCooldown(PlayerCasting __instance)
-		{
-            if (Main.DisableForHost.Value && Util.IsHost(__instance)) return true;
-			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableCooldownChecks.Value) return true;
-
-            ScriptableSkill skillToCast = __instance._currentCastSkill;
-            if (skillToCast == null) return true;
-
-			uint netId = __instance.netId;
-			
-            if (Main.ServerPlayerCooldowns.TryGetValue(netId, out var playerSkills) && playerSkills.TryGetValue(skillToCast.name, out float lastUsedTime))
-			{
-				float officialCooldown = skillToCast._skillRankParams._baseCooldown;
-                
-                // This log will show the base cooldown before checking for haste
-                Main.Log.LogInfo($"[{netId}] Checking cooldown for '{skillToCast.name}'. Base CD: {officialCooldown}");
-
-                if (PlayerHasHaste(__instance)) 
-                { 
-                    officialCooldown *= HASTE_MODIFIER; 
-                    Main.Log.LogInfo($"[{netId}] Haste detected. Modified CD for '{skillToCast.name}' is now: {officialCooldown}");
-                }
-
-				if (Time.time - lastUsedTime < officialCooldown)
-				{
-					Main.Log.LogInfo($"[{netId}] Skill '{skillToCast.name}' on cooldown. Time since last use: {Time.time - lastUsedTime:F2}s. Required: {officialCooldown:F2}s. CAST BLOCKED.");
-					return false;
-				}
-			}
-
-			if (!Main.ServerPlayerCooldowns.ContainsKey(netId)) Main.ServerPlayerCooldowns[netId] = new Dictionary<string, float>();
-			Main.ServerPlayerCooldowns[netId][skillToCast.name] = Time.time;
-			return true;
-		}
-	
 		[HarmonyPatch(typeof(PlayerCasting), "Cmd_InitSkill")]
 		[HarmonyPostfix]
 		public static void RecordCastStartTime(PlayerCasting __instance)
@@ -463,39 +485,77 @@ namespace HardAntiCheat
 			Main.ServerPlayerCastStartTime[__instance.netId] = Time.time;
 		}
 
-		[HarmonyPatch(typeof(PlayerCasting), "Cmd_CastInit")]
+		[HarmonyPatch(typeof(PlayerCasting), "Server_CastSkill")]
 		[HarmonyPrefix]
-		public static bool ValidateCastFinishTime(PlayerCasting __instance)
+		public static bool UnifiedSkillValidation(PlayerCasting __instance)
 		{
             if (Main.DisableForHost.Value && Util.IsHost(__instance)) return true;
-			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableCastTimeChecks.Value) return true;
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value) return true;
+
+            ScriptableSkill skillToCast = __instance._currentCastSkill;
+            if (skillToCast == null) return true;
 
 			uint netId = __instance.netId;
-			if (!Main.ServerPlayerCastStartTime.TryGetValue(netId, out float castStartTime))
-			{
-				Main.LogInfraction(__instance, "Skill Cast Time Manipulation", $"Finished a cast that was never started. Blocked.");
-				return false;
-			}
-            
-            ScriptableSkill currentSkill = __instance._currentCastSkill;
-            if (currentSkill == null) return true;
 
-			float officialCastTime = currentSkill._skillRankParams._baseCastTime;
-            if (PlayerHasHaste(__instance)) { officialCastTime *= HASTE_MODIFIER; }
-			float elapsedTime = Time.time - castStartTime;
-
-			if (elapsedTime < (officialCastTime * 0.9f))
+			if (Main.EnableCastTimeChecks.Value)
 			{
-				Main.LogInfraction(__instance, "Skill Cast Time Manipulation", $"Finished a {officialCastTime}s cast in {elapsedTime:F2}s. Blocked.");
-				Main.ServerPlayerCastStartTime.Remove(netId);
-				return false;
+				if (!Main.ServerPlayerCastStartTime.TryGetValue(netId, out float castStartTime))
+				{
+					Main.LogInfraction(__instance, "Skill Cast Time Manipulation", $"Finished a cast ('{skillToCast.name}') that was never started. Blocked.");
+					return false;
+				}
+
+				bool hasHaste = PlayerHasHaste(__instance);
+				float officialCastTime = skillToCast._skillRankParams._baseCastTime;
+				if (hasHaste) { officialCastTime *= HASTE_MODIFIER; }
+				float elapsedTime = Time.time - castStartTime;
+
+				if (elapsedTime < (officialCastTime * 0.9f))
+				{
+					Main.LogInfraction(__instance, "Skill Cast Time Manipulation", $"Finished a {officialCastTime:F2}s cast of '{skillToCast.name}' in {elapsedTime:F2}s. Blocked.");
+					return false;
+				}
 			}
+
+			if (Main.EnableCooldownChecks.Value)
+			{
+				if (Main.ServerPlayerCooldowns.TryGetValue(netId, out var playerSkills) && playerSkills.TryGetValue(skillToCast.name, out float lastUsedTime))
+				{
+					StatusEntity statusEntity = __instance.GetComponent<StatusEntity>();
+					string activeConditions = "None";
+					if (statusEntity != null && statusEntity._syncConditions.Count > 0)
+					{
+						activeConditions = string.Join(", ", statusEntity._syncConditions.Select(c => c._conditionID));
+					}
+
+					float officialCooldown = skillToCast._skillRankParams._baseCooldown;
+					bool hasHaste = PlayerHasHaste(__instance);
+					float finalCooldown = hasHaste ? officialCooldown * HASTE_MODIFIER : officialCooldown;
+					float timeSinceLastUse = Time.time - lastUsedTime;
+
+					string logMessage = $"[{netId}] Cooldown Check for '{skillToCast.name}': Base CD={officialCooldown:F1}, Active Conditions=({activeConditions}), Haste={hasHaste}, Final CD={finalCooldown:F1}, Time Since Use={timeSinceLastUse:F1}.";
+
+					if (timeSinceLastUse < finalCooldown)
+					{
+						Main.Log.LogInfo($"{logMessage} => RESULT: BLOCKED.");
+						return false;
+					}
+					else
+					{
+						Main.Log.LogInfo($"{logMessage} => RESULT: ALLOWED.");
+					}
+				}
+
+				if (!Main.ServerPlayerCooldowns.ContainsKey(netId)) Main.ServerPlayerCooldowns[netId] = new Dictionary<string, float>();
+				Main.ServerPlayerCooldowns[netId][skillToCast.name] = Time.time;
+			}
+
 			return true;
 		}
 
-		[HarmonyPatch(typeof(PlayerCasting), "Cmd_CastInit")]
+		[HarmonyPatch(typeof(PlayerCasting), "Server_CastSkill")]
 		[HarmonyPostfix]
-		public static void CleanupCastStartTime(NetworkBehaviour __instance)
+		public static void CleanupCastStartTime(PlayerCasting __instance)
 		{
 			if (!NetworkServer.active) return;
 			Main.ServerPlayerCastStartTime.Remove(__instance.netId);
