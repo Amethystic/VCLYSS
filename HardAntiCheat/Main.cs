@@ -39,6 +39,7 @@ namespace HardAntiCheat
 		// --- CONFIGURATION ENTRIES ---
 		public static ConfigEntry<bool> EnableAntiCheat;
 		public static ConfigEntry<bool> DisableForHost;
+        public static ConfigEntry<int> MaxLogFileSizeMB;
         public static ConfigEntry<bool> EnableMovementChecks;
 		public static ConfigEntry<float> MaxEffectiveSpeed;
         public static ConfigEntry<float> MovementGraceBuffer;
@@ -75,7 +76,8 @@ namespace HardAntiCheat
 
 			EnableAntiCheat = Config.Bind("1. General", "Enable AntiCheat", true, "Master switch to enable or disable all anti-cheat modules.");
 			DisableForHost = Config.Bind("1. General", "Disable Detections for Host", true, "If true, the player hosting the server will not be checked for infractions. Recommended for hosts who use admin commands.");
-			
+			MaxLogFileSizeMB = Config.Bind("1. General", "Max Log File Size (MB)", 5, "If the infraction log exceeds this size, it will be archived on startup to prevent it from growing infinitely.");
+
             EnableMovementChecks = Config.Bind("2. Movement Detections", "Enable Teleport/Distance Checks", true, "Checks the final result of player movement to catch physics-based speed hacks and teleports.");
             MaxEffectiveSpeed = Config.Bind("2. Movement Detections", "Max Effective Speed", 100f, "The maximum plausible speed (units per second) a player can move. Increase this if lagging players get false flagged.");
             MovementGraceBuffer = Config.Bind("2. Movement Detections", "Movement Grace Buffer", 10.0f, "A flat distance buffer added to the calculation to account for dashes, knockbacks, and small lag spikes.");
@@ -94,9 +96,37 @@ namespace HardAntiCheat
 			WarningsUntilAction = Config.Bind("5. Punishments", "Infractions Until Action", 5, "Number of infractions a player can commit before the selected action is taken.");
 			ActionType = Config.Bind("5. Punishments", "Action Type", "Kick", new ConfigDescription("The action to take when a player reaches the infraction limit.", new AcceptableValueList<string>("Kick", "Ban")));
 
+            CheckAndArchiveLogFile();
+
 			harmony.PatchAll();
 			Log.LogInfo($"[{ModInfo.NAME}] has been loaded. Infractions will be logged to: {InfractionLogPath}");
 		}
+
+        private void CheckAndArchiveLogFile()
+        {
+            try
+            {
+                if (File.Exists(InfractionLogPath))
+                {
+                    FileInfo logFileInfo = new FileInfo(InfractionLogPath);
+                    long maxLogSizeBytes = MaxLogFileSizeMB.Value * 1024L * 1024L;
+
+                    if (logFileInfo.Length > maxLogSizeBytes)
+                    {
+                        string archivePath = Path.Combine(
+                            Path.GetDirectoryName(InfractionLogPath),
+                            $"{Path.GetFileNameWithoutExtension(InfractionLogPath)}_ARCHIVED_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.txt"
+                        );
+                        File.Move(InfractionLogPath, archivePath);
+                        Log.LogInfo($"Infraction log exceeded {MaxLogFileSizeMB.Value}MB and was archived to: {archivePath}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.LogError($"Error while checking/archiving log file: {ex.Message}");
+            }
+        }
 
 		public static void LogInfraction(NetworkBehaviour instance, string cheatType, string details)
 		{
@@ -140,7 +170,16 @@ namespace HardAntiCheat
 					    catch (Exception ex) { Log.LogError($"Failed to write punishment to log: {ex.Message}"); }
                         
                         HostConsole._current._selectedPeerEntry = targetPeer;
-                        if(action == "kick") { HostConsole._current.Init_ServerMessage("[HAC]: " + punishmentDetails); HostConsole._current.Kick_Peer(); } else { HostConsole._current.Init_ServerMessage("[HAC]: " + punishmentDetails); HostConsole._current.Ban_Peer(); }
+                        if(action == "kick") 
+                        {
+                            HostConsole._current.Init_ServerMessage("[HAC]: " + punishmentDetails); 
+                            HostConsole._current.Kick_Peer(); 
+                        } 
+                        else 
+                        {
+                            HostConsole._current.Init_ServerMessage("[HAC]: " + punishmentDetails); 
+                            HostConsole._current.Ban_Peer(); 
+                        }
                         
                         ServerPlayerInfractionCount.Remove(netId);
                     }
@@ -165,81 +204,71 @@ namespace HardAntiCheat
             ServerPunishmentCooldown.Remove(netId);
         }
 	}
-
-    #region Game Data Initialization
-    [HarmonyPatch]
-    public static class InitializationPatch
-    {
-        private static bool areIDsInitialized = false;
-
-        [HarmonyPatch(typeof(GameManager), "Awake")]
-        [HarmonyPostfix]
-        public static void FindHasteID(GameManager __instance)
-        {
-            if (areIDsInitialized) return;
-
-            Main.Log.LogInfo("Attempting to dynamically identify Haste condition IDs...");
-            
-            try
-            {
-                var field = typeof(GameManager).GetField("_cachedScriptableConditions", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (field == null)
-                {
-                    Main.Log.LogError("Failed to find field '_cachedScriptableConditions' in GameManager. Haste check will not work.");
-                    return;
-                }
-
-                var cachedConditions = field.GetValue(__instance) as Dictionary<int, ScriptableCondition>;
-                if (cachedConditions == null || cachedConditions.Count == 0)
-                {
-                    Main.Log.LogError("Could not access the game's condition dictionary or it is empty. Haste check will not work automatically.");
-                    return;
-                }
-
-                foreach (var condition in cachedConditions.Values)
-                {
-                    if (condition != null && condition._conditionName != null && condition._conditionName.ToLower().Contains("haste"))
-                    {
-                        CombatValidationPatch.HASTE_BOON_IDs.Add(condition._ID);
-                        Main.Log.LogInfo($"Found Haste condition: '{condition._conditionName}' with ID: {condition._ID}. Added to anti-cheat.");
-                    }
-                }
-
-                if (CombatValidationPatch.HASTE_BOON_IDs.Count > 0)
-                {
-                    Main.Log.LogInfo("Successfully initialized dynamic Haste IDs.");
-                }
-                else
-                {
-                    Main.Log.LogWarning("Could not find any conditions named 'Haste'. Cooldown checks might be incorrect for hasted players.");
-                }
-            }
-            catch (Exception ex)
-            {
-                Main.Log.LogError($"An error occurred while trying to find Haste IDs. Haste check will not work. Error: {ex.Message}");
-            }
-            
-            areIDsInitialized = true;
-        }
-    }
-    #endregion
     
-    #region Player Spawn Grace Period & Initial Stats
+    #region Player Spawn & Server Initialization
 	[HarmonyPatch(typeof(PlayerMove), "Start")]
 	public static class PlayerSpawnPatch
 	{
 		private const float GRACE_PERIOD_SECONDS = 3.0f;
+        private static bool areServerIDsInitialized = false;
+
 		public static void Postfix(PlayerMove __instance)
 		{
 			if (!NetworkServer.active) return;
+            
+            if (!areServerIDsInitialized)
+            {
+                Main.Log.LogInfo("First player has spawned. HardAntiCheat server-side modules are now active and monitoring players.");
+                Main.Log.LogInfo("Attempting to dynamically identify Haste condition IDs...");
+                try
+                {
+                    var field = typeof(GameManager).GetField("_cachedScriptableConditions", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                    if (field == null)
+                    {
+                        Main.Log.LogError("Failed to find field '_cachedScriptableConditions' in GameManager. Haste check will not work.");
+                    }
+                    else
+                    {
+                        var cachedConditions = field.GetValue(GameManager._current) as Dictionary<int, ScriptableCondition>;
+                        if (cachedConditions == null || cachedConditions.Count == 0)
+                        {
+                            Main.Log.LogError("Could not access the game's condition dictionary or it is empty. Haste check will not work automatically.");
+                        }
+                        else
+                        {
+                            foreach (var condition in cachedConditions.Values)
+                            {
+                                if (condition != null && condition._conditionName != null && condition._conditionName.ToLower().Contains("haste"))
+                                {
+                                    CombatValidationPatch.HASTE_BOON_IDs.Add(condition._ID);
+                                    Main.Log.LogInfo($"Found Haste condition: '{condition._conditionName}' with ID: {condition._ID}. Added to anti-cheat.");
+                                }
+                            }
+
+                            if (CombatValidationPatch.HASTE_BOON_IDs.Count > 0)
+                            {
+                                Main.Log.LogInfo("Successfully initialized dynamic Haste IDs.");
+                            }
+                            else
+                            {
+                                Main.Log.LogWarning("Could not find any conditions named 'Haste'. Cooldown checks might be incorrect for hasted players.");
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Main.Log.LogError($"An error occurred while trying to find Haste IDs. Haste check will not work. Error: {ex.Message}");
+                }
+                areServerIDsInitialized = true;
+            }
+
             uint netId = __instance.netId;
-
             Main.ServerPlayerGracePeriod[netId] = Time.time + GRACE_PERIOD_SECONDS;
-
             if (!Main.ServerPlayerInitialSpeeds.ContainsKey(netId))
             {
                 Main.ServerPlayerInitialSpeeds[netId] = __instance.Network_movSpeed;
-                Main.Log.LogInfo($"[{netId}] Recorded initial move speed: {__instance.Network_movSpeed}");
+                Main.Log.LogInfo($"[{netId}] Recorded initial move speed for player: {__instance.Network_movSpeed}");
             }
 		}
 	}

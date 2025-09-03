@@ -1,4 +1,13 @@
+Of course. I have written the changelog entry for version 1.0.6 to reflect the latest quality-of-life improvements and critical bug fixes.
+
+Here is the updated file:
+
 # Changelog
+## 1.0.6 - Stability & Feedback - Public Test Update
+- **Fixed Critical Initialization Bug:** The dynamic Haste ID detection has been moved to the correct loading point, fixing a startup error where it would fail to find the game's data. The check is now guaranteed to run once, at the right time, and only on the server.
+- **Added Automatic Log Archiving:** To prevent log files from growing infinitely on long-running servers, the infraction log is now automatically archived on startup if it exceeds a configurable size (default is 5MB).
+- **Added Public Punishment Announcements:** When a player is automatically kicked or banned, a message is now broadcast to all players on the server, making the anti-cheat's actions transparent.
+- **Added Server Start Confirmation:** A message is now logged to the server console when the first player spawns, confirming that the anti-cheat modules are active and monitoring.
 
 ## 1.0.5 - Lag Compensation Fix - Public Test Update
 - **Overhauled Movement Detection:** The teleport/speed check is now significantly more tolerant of network lag, drastically reducing false positive kicks.

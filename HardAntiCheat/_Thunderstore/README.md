@@ -20,19 +20,20 @@ These mods are not required dependencies but are confirmed to be compatible and 
 
 ## General Configurations
 
-| **Setting**                   | **Default** | **Description**                                                                                  |
-| ----------------------------- | ----------- | ------------------------------------------------------------------------------------------------ |
-| `Enable AntiCheat`            | ✅          | Master switch to enable or disable all anti-cheat modules.                                       |
-| `Disable Detections for Host` | ✅          | If true, the player hosting will not be checked for infractions. Recommended for admin commands. |
+| **Setting**                   | **Default** | **Description**                                                                                                        |
+| ----------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `Enable AntiCheat`            | ✅          | Master switch to enable or disable all anti-cheat modules.                                                             |
+| `Disable Detections for Host` | ✅          | If true, the player hosting will not be checked for infractions. Recommended for admin commands.                       |
+| `Max Log File Size (MB)`      | 5           | If the infraction log exceeds this size on server startup, it will be archived and a new, clean log will be created. |
 
 ## Movement Detections
 
 | **Setting**                         | **Default** | **Description**                                                                                                   |
 | ----------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------- |
 | `Enable Teleport/Distance Checks`   | ✅          | Checks if players are moving faster than physically possible, preventing speed hacks and teleportation.           |
-| `Max Effective Speed`               | 150.0       | The maximum plausible speed (units per second) a player can move. Increase this if lagging players get false flagged. |
+| `Max Effective Speed`               | 100.0       | The maximum plausible speed (units per second) a player can move. Increase this if lagging players get false flagged. |
 | `Movement Grace Buffer`             | 10.0        | A flat distance buffer added to the calculation to account for dashes, knockbacks, and small lag spikes.            |
-| `Movement Time Threshold`           | 0.2         | The time (in seconds) between position checks. Higher values are more lenient on lag but less precise.            |
+| `Movement Time Threshold`           | 5.5         | The time (in seconds) between position checks. Higher values are more lenient on lag but less precise.            |
 | `Enable Fly/Infinite Jump Checks`   | ✅          | Checks if players are airborne for an impossibly long time and if their max jump stat has been illegally modified. |
 | `Enable Base Speed Stat Audits`     | ✅          | Prevents players from illegally modifying their base movement speed by reverting it to their spawn speed.         |
 
@@ -41,7 +42,7 @@ These mods are not required dependencies but are confirmed to be compatible and 
 | **Setting**                      | **Default** | **Description**                                                                                                        |
 | -------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `Enable Experience/Level Checks` | ✅          | Prevents players from gaining huge amounts of XP or multiple levels at once.                                           |
-| `Max Plausible XP Gain`          | 50000       | The maximum amount of XP a player can gain in a single transaction. Adjust based on your server's max XP rewards.      |
+| `Max Plausible XP Gain`          | 77000       | The maximum amount of XP a player can gain in a single transaction. Adjust based on your server's max XP rewards.      |
 
 ## Combat Detections
 
@@ -53,8 +54,8 @@ These mods are not required dependencies but are confirmed to be compatible and 
 
 ## Punishments
 
-| **Setting**                | **Default** | **Description**                                                            |
-| -------------------------- | ----------- | -------------------------------------------------------------------------- |
-| `Enable Punishment System` | ✅          | Enables the server to automatically take action against cheating players.  |
-| `Infractions Until Action` | 5           | Number of infractions allowed before action is triggered.                  |
-| `Action Type`              | Kick        | The action to take (`Kick` or `Ban`) when the infraction limit is reached. |
+| **Setting**                | **Default** | **Description**                                                                                                    |
+| -------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------ |
+| `Enable Punishment System` | ✅          | Enables the server to automatically take action against cheating players. Punishments are announced in server chat. |
+| `Infractions Until Action` | 5           | Number of infractions allowed before action is triggered.                                                          |
+| `Action Type`              | Kick        | The action to take (`Kick` or `Ban`) when the infraction limit is reached.                                         |
