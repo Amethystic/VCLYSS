@@ -6,7 +6,7 @@ using Mirror;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq; // Added for string.Join
+using System.Linq;
 using UnityEngine;
 
 namespace HardAntiCheat
@@ -40,6 +40,9 @@ namespace HardAntiCheat
 		public static ConfigEntry<bool> EnableAntiCheat;
 		public static ConfigEntry<bool> DisableForHost;
         public static ConfigEntry<bool> EnableMovementChecks;
+		public static ConfigEntry<float> MaxEffectiveSpeed;
+        public static ConfigEntry<float> MovementGraceBuffer;
+        public static ConfigEntry<float> MovementTimeThreshold;
 		public static ConfigEntry<bool> EnableAirborneChecks;
 		public static ConfigEntry<bool> EnableSpeedChecks;
 		public static ConfigEntry<bool> EnableExperienceChecks;
@@ -65,17 +68,23 @@ namespace HardAntiCheat
 		private void Awake()
 		{
 			Log = Logger;
-			InfractionLogPath = Path.Combine(Path.GetDirectoryName(Info.Location), $"{ModInfo.NAME}_InfractionLog.txt");
+            string pluginsPath = Directory.GetParent(Path.GetDirectoryName(Info.Location)).FullName;
+            string targetLogDirectory = Path.Combine(pluginsPath, "HardAntiCheat");
+            Directory.CreateDirectory(targetLogDirectory);
+            InfractionLogPath = Path.Combine(targetLogDirectory, $"{ModInfo.NAME}_InfractionLog.txt");
 
 			EnableAntiCheat = Config.Bind("1. General", "Enable AntiCheat", true, "Master switch to enable or disable all anti-cheat modules.");
 			DisableForHost = Config.Bind("1. General", "Disable Detections for Host", true, "If true, the player hosting the server will not be checked for infractions. Recommended for hosts who use admin commands.");
 			
             EnableMovementChecks = Config.Bind("2. Movement Detections", "Enable Teleport/Distance Checks", true, "Checks the final result of player movement to catch physics-based speed hacks and teleports.");
+            MaxEffectiveSpeed = Config.Bind("2. Movement Detections", "Max Effective Speed", 100f, "The maximum plausible speed (units per second) a player can move. Increase this if lagging players get false flagged.");
+            MovementGraceBuffer = Config.Bind("2. Movement Detections", "Movement Grace Buffer", 10.0f, "A flat distance buffer added to the calculation to account for dashes, knockbacks, and small lag spikes.");
+            MovementTimeThreshold = Config.Bind("2. Movement Detections", "Movement Time Threshold", 5.5f, "The time (in seconds) between position checks. Higher values are more lenient on lag but less precise.");
 			EnableAirborneChecks = Config.Bind("2. Movement Detections", "Enable Fly/Infinite Jump Checks", true, "Checks if players are airborne for an impossibly long time and have an invalid number of max jumps.");
 			EnableSpeedChecks = Config.Bind("2. Movement Detections", "Enable Base Speed Stat Audits", true, "Continuously checks if a player's base movement speed stat has been illegally modified and reverts it.");
 
 			EnableExperienceChecks = Config.Bind("3. Stat Detections", "Enable Experience/Level Checks", true, "Prevents players from gaining huge amounts of XP or multiple levels at once based on the 'Max Plausible XP Gain' limit.");
-            MaxPlausibleXPGain = Config.Bind("3. Stat Detections", "Max Plausible XP Gain", 50000, "The maximum amount of XP a player can gain in a single transaction. Adjust this based on your server's max XP rewards.");
+            MaxPlausibleXPGain = Config.Bind("3. Stat Detections", "Max Plausible XP Gain", 77000, "The maximum amount of XP a player can gain in a single transaction. Adjust this based on your server's max XP rewards.");
 
 			EnableCooldownChecks = Config.Bind("4. Combat Detections", "Enable Skill Cooldown Checks", true, "Silently enforces server-side cooldowns, blocking premature skill usage. Accounts for Haste.");
 			EnableCastTimeChecks = Config.Bind("4. Combat Detections", "Enable Skill Cast Time Checks", true, "Prevents players from instantly using skills that have a cast/channel time. Accounts for Haste.");
@@ -225,10 +234,8 @@ namespace HardAntiCheat
 			if (!NetworkServer.active) return;
             uint netId = __instance.netId;
 
-			// Set a grace period to prevent false positives on spawn
             Main.ServerPlayerGracePeriod[netId] = Time.time + GRACE_PERIOD_SECONDS;
 
-            // Record the player's initial movement speed as the baseline for speed hack checks
             if (!Main.ServerPlayerInitialSpeeds.ContainsKey(netId))
             {
                 Main.ServerPlayerInitialSpeeds[netId] = __instance.Network_movSpeed;
@@ -296,8 +303,6 @@ namespace HardAntiCheat
 	[HarmonyPatch(typeof(PlayerMove), "Update")]
 	public static class MovementAndAirborneValidationPatch
 	{
-		private const float MAX_EFFECTIVE_SPEED = 100f;
-		private const float GRACE_BUFFER_DISTANCE = 5.0f;
 		private const float MAX_ALLOWED_AIR_TIME = 10.0f;
         private const int MAX_LEGAL_MAXJUMPS = 3;
 
@@ -316,7 +321,6 @@ namespace HardAntiCheat
 			{
 				if (Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float initialSpeed))
                 {
-                    // Check if the current networked speed is greater than the recorded initial speed.
                     if (__instance.Network_movSpeed > initialSpeed)
                     {
                         Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance.Network_movSpeed}. Reverting to initial speed of {initialSpeed}.");
@@ -333,13 +337,13 @@ namespace HardAntiCheat
 					if (currentPosition != lastPositionData.Position)
 					{
 						float timeElapsed = Time.time - lastPositionData.Timestamp;
-						if (timeElapsed > 0.1f)
+						if (timeElapsed > Main.MovementTimeThreshold.Value)
 						{
 							float distanceTraveled = Vector3.Distance(lastPositionData.Position, currentPosition);
-							float maxPossibleDistance = (MAX_EFFECTIVE_SPEED * timeElapsed) + GRACE_BUFFER_DISTANCE;
+							float maxPossibleDistance = (Main.MaxEffectiveSpeed.Value * timeElapsed) + Main.MovementGraceBuffer.Value;
 							if (distanceTraveled > maxPossibleDistance)
 							{
-                                string details = $"Moved {distanceTraveled:F1} units in {timeElapsed:F2}s.";
+                                string details = $"Moved {distanceTraveled:F1} units in {timeElapsed:F2}s. Reverting position.";
                                 foreach(var conn in NetworkServer.connections.Values)
                                 {
                                     if(conn?.identity == null || conn.identity.netId == netId) continue;
@@ -349,7 +353,7 @@ namespace HardAntiCheat
                                         break;
                                     }
                                 }
-								Main.LogInfraction(__instance, "Movement Hack (Teleport/Speed)", $"{details} Reverting position.");
+								Main.LogInfraction(__instance, "Movement Hack (Teleport/Speed)", details);
 								__instance.transform.position = lastPositionData.Position;
                                 Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = lastPositionData.Position, Timestamp = Time.time };
 								return;

@@ -4,7 +4,7 @@
 
 This mod is a server-authoritative anti-cheat designed to block common exploits by making the server the source of truth for player actions. It is highly configurable, allowing hosts to tailor the detections to their server's needs.
 
-All detected infractions are logged with player details in the `BepInEx\plugins\HardAntiCheat_InfractionLog.txt` file for server admin review.
+All detected infractions are logged with player details in the `BepInEx\plugins\HardAntiCheat\HardAntiCheat_InfractionLog.txt` file for server admin review.
 
 ## Instructions
 
@@ -30,8 +30,11 @@ These mods are not required dependencies but are confirmed to be compatible and 
 | **Setting**                         | **Default** | **Description**                                                                                                   |
 | ----------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------- |
 | `Enable Teleport/Distance Checks`   | ✅          | Checks if players are moving faster than physically possible, preventing speed hacks and teleportation.           |
+| `Max Effective Speed`               | 150.0       | The maximum plausible speed (units per second) a player can move. Increase this if lagging players get false flagged. |
+| `Movement Grace Buffer`             | 10.0        | A flat distance buffer added to the calculation to account for dashes, knockbacks, and small lag spikes.            |
+| `Movement Time Threshold`           | 0.2         | The time (in seconds) between position checks. Higher values are more lenient on lag but less precise.            |
 | `Enable Fly/Infinite Jump Checks`   | ✅          | Checks if players are airborne for an impossibly long time and if their max jump stat has been illegally modified. |
-| `Enable Base Speed Stat Audits`     | ✅          | Prevents players from setting their base movement speed stat to illegal values by reverting it.                   |
+| `Enable Base Speed Stat Audits`     | ✅          | Prevents players from illegally modifying their base movement speed by reverting it to their spawn speed.         |
 
 ## Stat Detections
 
