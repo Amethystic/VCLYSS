@@ -54,7 +54,6 @@ namespace HardAntiCheat
 		public static readonly Dictionary<uint, PlayerAirborneData> ServerPlayerAirborneStates = new Dictionary<uint, PlayerAirborneData>();
 		public static readonly Dictionary<uint, int> ServerPlayerInfractionCount = new Dictionary<uint, int>();
 		public static readonly Dictionary<uint, float> ServerPlayerGracePeriod = new Dictionary<uint, float>();
-        public static readonly Dictionary<uint, float> ServerPunishmentCooldown = new Dictionary<uint, float>();
 		
 		private void Awake()
 		{
@@ -84,8 +83,6 @@ namespace HardAntiCheat
 		public static void LogInfraction(NetworkBehaviour instance, string cheatType, string details)
 		{
             uint netId = instance.netId;
-            if (ServerPunishmentCooldown.TryGetValue(netId, out float cooldownEndTime) && Time.time < cooldownEndTime) { return; }
-            ServerPunishmentCooldown.Remove(netId);
 
 			if (!ServerPlayerInfractionCount.ContainsKey(netId)) ServerPlayerInfractionCount[netId] = 0;
 			ServerPlayerInfractionCount[netId]++;
@@ -114,8 +111,6 @@ namespace HardAntiCheat
 
                     if (targetPeer != null)
                     {
-                        ServerPunishmentCooldown[netId] = Time.time + 60f;
-                        
                         string action = ActionType.Value.ToLower();
 					    string punishmentDetails = $"Player {playerName} (ID: {playerID}) was automatically {action.ToUpper()}ed for reaching {currentInfractions}/{maxInfractions} infractions.";
 					    Log.LogWarning(punishmentDetails);
@@ -125,7 +120,7 @@ namespace HardAntiCheat
                         HostConsole._current._selectedPeerEntry = targetPeer;
                         if(action == "kick") { HostConsole._current.Kick_Peer(); } else { HostConsole._current.Ban_Peer(); }
                         
-                        ServerPlayerInfractionCount.Remove(netId);
+                        ClearAllPlayerData(netId);
                     }
                     else
                     {
@@ -143,7 +138,6 @@ namespace HardAntiCheat
             ServerPlayerAirborneStates.Remove(netId);
             ServerPlayerInfractionCount.Remove(netId);
             ServerPlayerGracePeriod.Remove(netId);
-            ServerPunishmentCooldown.Remove(netId);
         }
 	}
     
@@ -299,6 +293,7 @@ namespace HardAntiCheat
 			Main.ServerPlayerStats[netId] = currentStats;
 			return true;
 		}
+
 		[HarmonyPatch(typeof(PlayerStats), "set_Network_currentLevel")]
 		[HarmonyPrefix]
 		public static bool ValidateLevelChange(PlayerStats __instance, ref int value)
@@ -338,7 +333,6 @@ namespace HardAntiCheat
         {
             StatusEntity statusEntity = instance.GetComponent<StatusEntity>();
             if (statusEntity == null) return false;
-            
             foreach(var condition in statusEntity._syncConditions)
             {
                 if (condition._conditionID != 0 && HASTE_BOON_IDs.Contains(condition._conditionID))
@@ -364,10 +358,7 @@ namespace HardAntiCheat
             if (Main.ServerPlayerCooldowns.TryGetValue(netId, out var playerSkills) && playerSkills.TryGetValue(skillToCast.name, out float lastUsedTime))
 			{
 				float officialCooldown = skillToCast._skillRankParams._baseCooldown;
-                if (PlayerHasHaste(__instance))
-                {
-                    officialCooldown *= HASTE_MODIFIER;
-                }
+                if (PlayerHasHaste(__instance)) { officialCooldown *= HASTE_MODIFIER; }
 				if (Time.time - lastUsedTime < officialCooldown)
 				{
 					return false;
@@ -406,10 +397,7 @@ namespace HardAntiCheat
             if (currentSkill == null) return true;
 
 			float officialCastTime = currentSkill._skillRankParams._baseCastTime;
-            if (PlayerHasHaste(__instance))
-            {
-                officialCastTime *= HASTE_MODIFIER;
-            }
+            if (PlayerHasHaste(__instance)) { officialCastTime *= HASTE_MODIFIER; }
 			float elapsedTime = Time.time - castStartTime;
 
 			if (elapsedTime < (officialCastTime * 0.9f))
