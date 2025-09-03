@@ -11,6 +11,7 @@ using UnityEngine;
 namespace HardAntiCheat
 {
     #region Data Structures
+    public struct PlayerPositionData { public Vector3 Position; public float Timestamp; }
 	public struct PlayerStatsData { public int Level; public int Experience; }
 	public struct PlayerAirborneData { public float AirTime; public Vector3 LastGroundedPosition; public int ServerSideJumpCount; }
     #endregion
@@ -37,7 +38,9 @@ namespace HardAntiCheat
 		// --- CONFIGURATION ENTRIES ---
 		public static ConfigEntry<bool> EnableAntiCheat;
 		public static ConfigEntry<bool> DisableForHost;
+        public static ConfigEntry<bool> EnableMovementChecks;
 		public static ConfigEntry<bool> EnableAirborneChecks;
+		public static ConfigEntry<bool> EnableSpeedChecks;
 		public static ConfigEntry<bool> EnableExperienceChecks;
         public static ConfigEntry<int> MaxPlausibleXPGain;
 		public static ConfigEntry<bool> EnableCooldownChecks;
@@ -50,10 +53,12 @@ namespace HardAntiCheat
 		// --- SERVER-SIDE DATA DICTIONARIES ---
 		public static readonly Dictionary<uint, Dictionary<string, float>> ServerPlayerCooldowns = new Dictionary<uint, Dictionary<string, float>>();
 		public static readonly Dictionary<uint, float> ServerPlayerCastStartTime = new Dictionary<uint, float>();
+        public static readonly Dictionary<uint, PlayerPositionData> ServerPlayerPositions = new Dictionary<uint, PlayerPositionData>();
 		public static readonly Dictionary<uint, PlayerStatsData> ServerPlayerStats = new Dictionary<uint, PlayerStatsData>();
 		public static readonly Dictionary<uint, PlayerAirborneData> ServerPlayerAirborneStates = new Dictionary<uint, PlayerAirborneData>();
 		public static readonly Dictionary<uint, int> ServerPlayerInfractionCount = new Dictionary<uint, int>();
 		public static readonly Dictionary<uint, float> ServerPlayerGracePeriod = new Dictionary<uint, float>();
+        public static readonly Dictionary<uint, float> ServerPunishmentCooldown = new Dictionary<uint, float>();
 		
 		private void Awake()
 		{
@@ -63,8 +68,10 @@ namespace HardAntiCheat
 			EnableAntiCheat = Config.Bind("1. General", "Enable AntiCheat", true, "Master switch to enable or disable all anti-cheat modules.");
 			DisableForHost = Config.Bind("1. General", "Disable Detections for Host", true, "If true, the player hosting the server will not be checked for infractions. Recommended for hosts who use admin commands.");
 			
+            EnableMovementChecks = Config.Bind("2. Movement Detections", "Enable Teleport/Distance Checks", true, "Checks the final result of player movement to catch physics-based speed hacks and teleports.");
 			EnableAirborneChecks = Config.Bind("2. Movement Detections", "Enable Fly/Infinite Jump Checks", true, "Checks if players are airborne for an impossibly long time and have an invalid number of max jumps.");
-            
+			EnableSpeedChecks = Config.Bind("2. Movement Detections", "Enable Base Speed Stat Audits", true, "Continuously checks if a player's base movement speed stat has been illegally modified and reverts it.");
+
 			EnableExperienceChecks = Config.Bind("3. Stat Detections", "Enable Experience/Level Checks", true, "Prevents players from gaining huge amounts of XP or multiple levels at once based on the 'Max Plausible XP Gain' limit.");
             MaxPlausibleXPGain = Config.Bind("3. Stat Detections", "Max Plausible XP Gain", 50000, "The maximum amount of XP a player can gain in a single transaction. Adjust this based on your server's max XP rewards.");
 
@@ -83,6 +90,8 @@ namespace HardAntiCheat
 		public static void LogInfraction(NetworkBehaviour instance, string cheatType, string details)
 		{
             uint netId = instance.netId;
+            if (ServerPunishmentCooldown.TryGetValue(netId, out float cooldownEndTime) && Time.time < cooldownEndTime) { return; }
+            ServerPunishmentCooldown.Remove(netId);
 
 			if (!ServerPlayerInfractionCount.ContainsKey(netId)) ServerPlayerInfractionCount[netId] = 0;
 			ServerPlayerInfractionCount[netId]++;
@@ -111,6 +120,8 @@ namespace HardAntiCheat
 
                     if (targetPeer != null)
                     {
+                        ServerPunishmentCooldown[netId] = Time.time + 60f;
+
                         string action = ActionType.Value.ToLower();
 					    string punishmentDetails = $"Player {playerName} (ID: {playerID}) was automatically {action.ToUpper()}ed for reaching {currentInfractions}/{maxInfractions} infractions.";
 					    Log.LogWarning(punishmentDetails);
@@ -120,7 +131,7 @@ namespace HardAntiCheat
                         HostConsole._current._selectedPeerEntry = targetPeer;
                         if(action == "kick") { HostConsole._current.Kick_Peer(); } else { HostConsole._current.Ban_Peer(); }
                         
-                        ClearAllPlayerData(netId);
+                        ServerPlayerInfractionCount.Remove(netId);
                     }
                     else
                     {
@@ -134,10 +145,12 @@ namespace HardAntiCheat
         {
             ServerPlayerCooldowns.Remove(netId);
             ServerPlayerCastStartTime.Remove(netId);
+            ServerPlayerPositions.Remove(netId);
             ServerPlayerStats.Remove(netId);
             ServerPlayerAirborneStates.Remove(netId);
             ServerPlayerInfractionCount.Remove(netId);
             ServerPlayerGracePeriod.Remove(netId);
+            ServerPunishmentCooldown.Remove(netId);
         }
 	}
     
@@ -210,10 +223,13 @@ namespace HardAntiCheat
     }
 
 	[HarmonyPatch(typeof(PlayerMove), "Update")]
-	public static class AirborneValidationPatch
+	public static class MovementAndAirborneValidationPatch
 	{
+		private const float MAX_EFFECTIVE_SPEED = 120f;
+		private const float GRACE_BUFFER_DISTANCE = 5.0f;
 		private const float MAX_ALLOWED_AIR_TIME = 10.0f;
         private const int MAX_LEGAL_MAXJUMPS = 3;
+        private const float MAX_LEGAL_MOVESPEED = 40f;
 		public static void Postfix(PlayerMove __instance)
 		{
             if (Main.DisableForHost.Value && Util.IsHost(__instance)) return;
@@ -222,10 +238,53 @@ namespace HardAntiCheat
 			uint netId = __instance.netId;
 			if (Main.ServerPlayerGracePeriod.TryGetValue(netId, out float gracePeriodEndTime))
 			{
-				if (Time.time < gracePeriodEndTime) { return; }
-				else { Main.ServerPlayerGracePeriod.Remove(netId); }
+				if (Time.time < gracePeriodEndTime) { return; } else { Main.ServerPlayerGracePeriod.Remove(netId); }
 			}
-            
+			
+            if (Main.EnableSpeedChecks.Value)
+			{
+				if (__instance._movSpeed > MAX_LEGAL_MOVESPEED)
+				{
+					Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal _movSpeed of {__instance._movSpeed}. Reverting.");
+					__instance.Network_movSpeed = GameManager._current._statLogics._baseMoveSpeed;
+				}
+			}
+
+			Vector3 currentPosition = __instance.transform.position;
+			if (Main.EnableMovementChecks.Value)
+			{
+				if (Main.ServerPlayerPositions.TryGetValue(netId, out PlayerPositionData lastPositionData))
+				{
+					if (currentPosition != lastPositionData.Position)
+					{
+						float timeElapsed = Time.time - lastPositionData.Timestamp;
+						if (timeElapsed > 0.1f)
+						{
+							float distanceTraveled = Vector3.Distance(lastPositionData.Position, currentPosition);
+							float maxPossibleDistance = (MAX_EFFECTIVE_SPEED * timeElapsed) + GRACE_BUFFER_DISTANCE;
+							if (distanceTraveled > maxPossibleDistance)
+							{
+                                string details = $"Moved {distanceTraveled:F1} units in {timeElapsed:F2}s.";
+                                foreach(var conn in NetworkServer.connections.Values)
+                                {
+                                    if(conn?.identity == null || conn.identity.netId == netId) continue;
+                                    if(Vector3.Distance(currentPosition, conn.identity.transform.position) < 1.0f)
+                                    {
+                                        details += " Teleported directly to another player.";
+                                        break;
+                                    }
+                                }
+								Main.LogInfraction(__instance, "Movement Hack (Teleport/Speed)", $"{details} Reverting position.");
+								__instance.transform.position = lastPositionData.Position;
+                                Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = lastPositionData.Position, Timestamp = Time.time };
+								return;
+							}
+						}
+					}
+				}
+				Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = currentPosition, Timestamp = Time.time };
+			}
+
 			if (Main.EnableAirborneChecks.Value)
 			{
                 if (__instance._maxJumps > MAX_LEGAL_MAXJUMPS)
@@ -233,9 +292,8 @@ namespace HardAntiCheat
                     Main.LogInfraction(__instance, "Stat Manipulation (Max Jumps)", $"Client reported _maxJumps of {__instance._maxJumps}. Reverting to {MAX_LEGAL_MAXJUMPS}.");
                     __instance._maxJumps = MAX_LEGAL_MAXJUMPS;
                 }
-
-                Vector3 currentPosition = __instance.transform.position;
-				bool isGrounded = __instance.RayGroundCheck();
+				
+                bool isGrounded = __instance.RayGroundCheck();
                 if (!Main.ServerPlayerAirborneStates.TryGetValue(netId, out PlayerAirborneData airData))
                 { airData = new PlayerAirborneData { AirTime = 0f, LastGroundedPosition = currentPosition, ServerSideJumpCount = 0 }; }
 
@@ -293,7 +351,6 @@ namespace HardAntiCheat
 			Main.ServerPlayerStats[netId] = currentStats;
 			return true;
 		}
-
 		[HarmonyPatch(typeof(PlayerStats), "set_Network_currentLevel")]
 		[HarmonyPrefix]
 		public static bool ValidateLevelChange(PlayerStats __instance, ref int value)
@@ -333,13 +390,30 @@ namespace HardAntiCheat
         {
             StatusEntity statusEntity = instance.GetComponent<StatusEntity>();
             if (statusEntity == null) return false;
-            foreach(var condition in statusEntity._syncConditions)
+
+            // --- REVERTED TO ORIGINAL, CORRECT LOGIC WITH DEBUGGING ---
+            // Your initial approach was correct. We will add logging to see why it's not working as expected.
+            // Check your BepInEx console when a player casts a skill.
+
+            if (statusEntity._syncConditions.Count > 0)
             {
-                if (condition._conditionID != 0 && HASTE_BOON_IDs.Contains(condition._conditionID))
+                string allConditions = "";
+                foreach (var condition in statusEntity._syncConditions)
                 {
-                    return true;
+                    allConditions += condition._conditionID + ", ";
+                    if (condition._conditionID != 0 && HASTE_BOON_IDs.Contains(condition._conditionID))
+                    {
+                        Main.Log.LogInfo($"[{instance.netId}] Haste check SUCCESS. Found active Haste ID: {condition._conditionID}. Applying modifier.");
+                        return true;
+                    }
                 }
+                Main.Log.LogInfo($"[{instance.netId}] Haste check FAIL. Player has conditions ({allConditions.TrimEnd(',', ' ')}), but none are Haste IDs.");
             }
+            else
+            {
+                Main.Log.LogInfo($"[{instance.netId}] Haste check FAIL. Player has no conditions in _syncConditions list.");
+            }
+            
             return false;
         }
 
@@ -358,9 +432,19 @@ namespace HardAntiCheat
             if (Main.ServerPlayerCooldowns.TryGetValue(netId, out var playerSkills) && playerSkills.TryGetValue(skillToCast.name, out float lastUsedTime))
 			{
 				float officialCooldown = skillToCast._skillRankParams._baseCooldown;
-                if (PlayerHasHaste(__instance)) { officialCooldown *= HASTE_MODIFIER; }
+                
+                // This log will show the base cooldown before checking for haste
+                Main.Log.LogInfo($"[{netId}] Checking cooldown for '{skillToCast.name}'. Base CD: {officialCooldown}");
+
+                if (PlayerHasHaste(__instance)) 
+                { 
+                    officialCooldown *= HASTE_MODIFIER; 
+                    Main.Log.LogInfo($"[{netId}] Haste detected. Modified CD for '{skillToCast.name}' is now: {officialCooldown}");
+                }
+
 				if (Time.time - lastUsedTime < officialCooldown)
 				{
+					Main.Log.LogInfo($"[{netId}] Skill '{skillToCast.name}' on cooldown. Time since last use: {Time.time - lastUsedTime:F2}s. Required: {officialCooldown:F2}s. CAST BLOCKED.");
 					return false;
 				}
 			}
