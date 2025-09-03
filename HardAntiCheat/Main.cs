@@ -140,7 +140,7 @@ namespace HardAntiCheat
 					    catch (Exception ex) { Log.LogError($"Failed to write punishment to log: {ex.Message}"); }
                         
                         HostConsole._current._selectedPeerEntry = targetPeer;
-                        if(action == "kick") { HostConsole._current.Kick_Peer(); } else { HostConsole._current.Ban_Peer(); }
+                        if(action == "kick") { HostConsole._current.Init_ServerMessage("[HAC]: " + punishmentDetails); HostConsole._current.Kick_Peer(); } else { HostConsole._current.Init_ServerMessage("[HAC]: " + punishmentDetails); HostConsole._current.Ban_Peer(); }
                         
                         ServerPlayerInfractionCount.Remove(netId);
                     }
