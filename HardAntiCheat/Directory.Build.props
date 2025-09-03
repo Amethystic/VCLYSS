@@ -11,7 +11,7 @@
         <CreateThunderstorePackage>true</CreateThunderstorePackage>
         <ThunderstorePackageName>HardAntiCheat</ThunderstorePackageName>
         <ThunderstoreTeamName>s0apy</ThunderstoreTeamName>
-        <ThunderstorePackageDescription>Work in progress anti-cheat plugin for Atlyss multiplayer.</ThunderstorePackageDescription>
+        <ThunderstorePackageDescription>Anti-cheat plugin for Atlyss multiplayer. (In Public Testing)</ThunderstorePackageDescription>
         <ThunderstoreWebsite>https://store.steampowered.com/app/2768430/ATLYSS/</ThunderstoreWebsite>
     </PropertyGroup>
     <ItemGroup>
