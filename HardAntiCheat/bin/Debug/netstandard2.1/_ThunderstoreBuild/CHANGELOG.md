@@ -3,6 +3,15 @@ Of course. I have written the changelog entry for version 1.0.6 to reflect the l
 Here is the updated file:
 
 # Changelog
+## V2 - Reforctory - Public Test Update
+- Fixes "Players getting railed on skill init still" FULLY
+- Fixed fly/movement checks
+- Fixed host bool issue
+- Added logging choices depending on user choice
+
+## 1.0.7 - Bugfix - Public Test Update
+- Players getting railed on skill init
+
 ## 1.0.6 - Stability & Feedback - Public Test Update
 - **Fixed Critical Initialization Bug:** The dynamic Haste ID detection has been moved to the correct loading point, fixing a startup error where it would fail to find the game's data. The check is now guaranteed to run once, at the right time, and only on the server.
 - **Added Automatic Log Archiving:** To prevent log files from growing infinitely on long-running servers, the infraction log is now automatically archived on startup if it exceeds a configurable size (default is 5MB).

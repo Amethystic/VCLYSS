@@ -28,14 +28,15 @@ These mods are not required dependencies but are confirmed to be compatible and 
 
 ## Movement Detections
 
-| **Setting**                         | **Default** | **Description**                                                                                                   |
-| ----------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------- |
-| `Enable Teleport/Distance Checks`   | ✅          | Checks if players are moving faster than physically possible, preventing speed hacks and teleportation.           |
-| `Max Effective Speed`               | 100.0       | The maximum plausible speed (units per second) a player can move. Increase this if lagging players get false flagged. |
-| `Movement Grace Buffer`             | 10.0        | A flat distance buffer added to the calculation to account for dashes, knockbacks, and small lag spikes.            |
-| `Movement Time Threshold`           | 5.5         | The time (in seconds) between position checks. Higher values are more lenient on lag but less precise.            |
-| `Enable Fly/Infinite Jump Checks`   | ✅          | Checks if players are airborne for an impossibly long time and if their max jump stat has been illegally modified. |
-| `Enable Base Speed Stat Audits`     | ✅          | Prevents players from illegally modifying their base movement speed by reverting it to their spawn speed.         |
+| **Setting**                       | **Default** | **Description**                                                                                                       |
+|-----------------------------------|-------------|-----------------------------------------------------------------------------------------------------------------------|
+| `Enable Teleport/Distance Checks` | ✅           | Checks if players are moving faster than physically possible, preventing speed hacks and teleportation.               |
+| `Max Effective Speed`             | 100.0       | The maximum plausible speed (units per second) a player can move. Increase this if lagging players get false flagged. |
+| `Movement Grace Buffer`           | 10.0        | A flat distance buffer added to the calculation to account for dashes, knockbacks, and small lag spikes.              |
+| `Movement Time Threshold`         | 5.5         | The time (in seconds) between position checks. Higher values are more lenient on lag but less precise.                |
+| `Enable Fly/Infinite Jump Checks` | ✅           | Checks if players are airborne for an impossibly long time and if their max jump stat has been illegally modified.    |
+| `Enable Base Speed Stat Audits`   | ✅           | Prevents players from illegally modifying their base movement speed by reverting it to their spawn speed.             |
+| `Jump Threshold`                  | 8           | Your threshold to jump cooldown                                                                                       |
 
 ## Stat Detections
 
@@ -49,7 +50,6 @@ These mods are not required dependencies but are confirmed to be compatible and 
 | **Setting**                     | **Default** | **Description**                                                                                                         |
 | ------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `Enable Skill Cooldown Checks`  | ✅          | Prevents using skills faster than their cooldowns allow. Dynamically accounts for cooldown-reducing effects like **Haste**. |
-| `Enable Skill Cast Time Checks` | ✅          | Prevents instantly using skills that have a cast/channel time. Dynamically accounts for cast speed effects like **Haste**.  |
 | `Enable Self-Revive Checks`     | ✅          | Prevents players from reviving themselves or replenishing their stats while dead.                                       |
 
 ## Punishments
