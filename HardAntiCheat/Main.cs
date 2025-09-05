@@ -15,17 +15,18 @@ namespace HardAntiCheat
     #region Data Structures
     public struct PlayerPositionData { public Vector3 Position; public float Timestamp; }
 	public struct PlayerStatsData { public int Level; public int Experience; }
-	public struct PlayerAirborneData { public float AirTime; public Vector3 LastGroundedPosition; public int ServerSideJumpCount; }
+    // MODIFIED: Added fields for vertical stall detection
+	public struct PlayerAirborneData { public float AirTime; public Vector3 LastGroundedPosition; public int ServerSideJumpCount; public float LastVerticalPosition; public float VerticalStallTime; }
     #endregion
 
     #region Utility Class
     public static class Util
     {
-        public static bool IsHost(NetworkBehaviour instance)
-        {
-            Player player = instance.GetComponent<Player>();
-            return player != null && player._isHostPlayer;
-        }
+	    public static bool IsHost(NetworkBehaviour instance) 
+	    { 
+		    Player player = instance.GetComponent<Player>();
+		    return player != null && player._isHostPlayer;
+	    }
     }
     #endregion
 
@@ -45,8 +46,12 @@ namespace HardAntiCheat
 		public static ConfigEntry<float> MaxEffectiveSpeed;
         public static ConfigEntry<float> MovementGraceBuffer;
         public static ConfigEntry<float> MovementTimeThreshold;
+        public static ConfigEntry<float> TeleportDistanceThreshold;
 		public static ConfigEntry<bool> EnableAirborneChecks;
 		public static ConfigEntry<bool> EnableSpeedChecks;
+        public static ConfigEntry<float> SpeedHackDetectionCooldown;
+        public static ConfigEntry<float> JumpHackDetectionCooldown;
+        public static ConfigEntry<float> AirborneHackDetectionCooldown;
 		public static ConfigEntry<bool> EnableExperienceChecks;
 		public static ConfigEntry<int> JumpThreshold;
         public static ConfigEntry<int> MaxPlausibleXPGain;
@@ -61,7 +66,6 @@ namespace HardAntiCheat
         public static ConfigEntry<bool> LogInfractionCount;
         public static ConfigEntry<bool> LogInfractionDetails;
 
-
 		// --- SERVER-SIDE DATA DICTIONARIES ---
 		public static readonly Dictionary<uint, Dictionary<string, float>> ServerRemainingCooldowns = new Dictionary<uint, Dictionary<string, float>>();
         public static readonly Dictionary<uint, PlayerPositionData> ServerPlayerPositions = new Dictionary<uint, PlayerPositionData>();
@@ -71,6 +75,9 @@ namespace HardAntiCheat
 		public static readonly Dictionary<uint, int> ServerPlayerInfractionCount = new Dictionary<uint, int>();
 		public static readonly Dictionary<uint, float> ServerPlayerGracePeriod = new Dictionary<uint, float>();
         public static readonly Dictionary<uint, float> ServerPunishmentCooldown = new Dictionary<uint, float>();
+        public static readonly Dictionary<uint, float> ServerSpeedCheckCooldowns = new Dictionary<uint, float>();
+        public static readonly Dictionary<uint, float> ServerJumpCheckCooldowns = new Dictionary<uint, float>();
+        public static readonly Dictionary<uint, float> ServerAirborneCheckCooldowns = new Dictionary<uint, float>();
 		
 		private void Awake()
 		{
@@ -88,9 +95,13 @@ namespace HardAntiCheat
             MaxEffectiveSpeed = Config.Bind("2. Movement Detections", "Max Effective Speed", 100f, "The maximum plausible speed (units per second) a player can move. Increase this if lagging players get false flagged.");
             MovementGraceBuffer = Config.Bind("2. Movement Detections", "Movement Grace Buffer", 10.0f, "A flat distance buffer added to the calculation to account for dashes, knockbacks, and small lag spikes.");
             MovementTimeThreshold = Config.Bind("2. Movement Detections", "Movement Time Threshold", 5.5f, "The time (in seconds) between position checks. Higher values are more lenient on lag but less precise.");
+            TeleportDistanceThreshold = Config.Bind("2. Movement Detections", "Teleport Distance Threshold", 50f, "Any movement faster than plausible that also covers more than this distance is logged as a 'Teleport' instead of a 'Speed Hack'.");
 			EnableAirborneChecks = Config.Bind("2. Movement Detections", "Enable Fly/Infinite Jump Checks", true, "Checks if players are airborne for an impossibly long time and have an invalid number of max jumps.");
 			EnableSpeedChecks = Config.Bind("2. Movement Detections", "Enable Base Speed Stat Audits", true, "Continuously checks if a player's base movement speed stat has been illegally modified and reverts it.");
 			JumpThreshold = Config.Bind("2. Movement Detections", "Jump threshold", 8, "The maximum number of jumps a player is allowed to perform before returning to the ground.");
+            SpeedHackDetectionCooldown = Config.Bind("2. Movement Detections", "Speed Hack Detection Cooldown", 2.0f, "How long (in seconds) the anti-cheat will wait before logging another speed stat infraction for the same player. Prevents log spam.");
+            JumpHackDetectionCooldown = Config.Bind("2. Movement Detections", "Jump Hack Detection Cooldown", 2.0f, "How long (in seconds) the anti-cheat will wait before logging another jump stat infraction for the same player. Prevents log spam.");
+            AirborneHackDetectionCooldown = Config.Bind("2. Movement Detections", "Airborne Hack Detection Cooldown", 10.0f, "How long (in seconds) the anti-cheat will wait before logging another airborne infraction for the same player. Prevents log spam.");
 
 			EnableExperienceChecks = Config.Bind("3. Stat Detections", "Enable Experience/Level Checks", true, "Prevents players from gaining huge amounts of XP or multiple levels at once based on the 'Max Plausible XP Gain' limit.");
             MaxPlausibleXPGain = Config.Bind("3. Stat Detections", "Max Plausible XP Gain", 77000, "The maximum amount of XP a player can gain in a single transaction. Adjust this based on your server's max XP rewards.");
@@ -101,19 +112,29 @@ namespace HardAntiCheat
 			EnablePunishmentSystem = Config.Bind("5. Punishments", "Enable Punishment System", true, "If enabled, the server will automatically take action against players who accumulate too many infractions.");
 			WarningsUntilAction = Config.Bind("5. Punishments", "Infractions Until Action", 5, "Number of infractions a player can commit before the selected action is taken.");
 			ActionType = Config.Bind("5. Punishments", "Action Type", "Kick", new ConfigDescription("The action to take when a player reaches the infraction limit.", new AcceptableValueList<string>("Kick", "Ban")));
-
+			
             EnableDetailedLogs = Config.Bind("6. Logging", "Enable Detailed Logs", true, "Master switch for detailed infraction logs. If false, a minimal log is created. If true, uses the options below.");
             LogPlayerName = Config.Bind("6. Logging", "Log Player Name", true, "Include the player's name in detailed logs.");
             LogPlayerID = Config.Bind("6. Logging", "Log Player ID", true, "Include the player's SteamID/netId in detailed logs.");
             LogInfractionDetails = Config.Bind("6. Logging", "Log Infraction Details", true, "Include the specific reason/details of the infraction in detailed logs.");
             LogInfractionCount = Config.Bind("6. Logging", "Log Infraction Count", true, "Include the player's current warning count in detailed logs.");
-
-
+            
+            Config.SettingChanged += OnSettingChanged;
             CheckAndArchiveLogFile();
-
 			harmony.PatchAll();
 			Log.LogInfo($"[{ModInfo.NAME}] has been loaded. Infractions will be logged to: {InfractionLogPath}");
 		}
+
+		public void OnDestroy()
+        {
+            Config.SettingChanged -= OnSettingChanged;
+            harmony.UnpatchSelf();
+        }
+
+        private void OnSettingChanged(object sender, SettingChangedEventArgs e)
+        {
+            Log.LogInfo($"Configuration setting changed: {e.ChangedSetting.Definition.Key} = {e.ChangedSetting.BoxedValue}");
+        }
 
         private void CheckAndArchiveLogFile()
         {
@@ -155,38 +176,8 @@ namespace HardAntiCheat
 			Player player = instance.GetComponent<Player>();
 			string playerName = player?._nickname ?? "Unknown";
 			string playerID = player?._steamID ?? $"netId:{netId}";
-			
-            // --- REWRITTEN DYNAMIC LOGGING ---
-            string logMessage;
-            if (EnableDetailedLogs.Value)
-            {
-                var sb = new StringBuilder();
-                sb.Append($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}]");
 
-                var segments = new List<string>();
-                if (LogPlayerName.Value) segments.Add($"Player: {playerName}");
-                if (LogPlayerID.Value) segments.Add($"ID: {playerID}");
-                if (segments.Any()) sb.Append(" " + string.Join(" | ", segments));
-
-                sb.Append($" | Type: {cheatType}");
-
-                if (LogInfractionDetails.Value) sb.Append($" | Details: {details}");
-                if (LogInfractionCount.Value) sb.Append($" | Warning {currentInfractions}/{maxInfractions}");
-
-                logMessage = sb.ToString();
-            }
-            else
-            {
-                logMessage = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Player: {playerName} flagged for {cheatType} ({currentInfractions}/{maxInfractions})";
-            }
-
-			Log.LogWarning(logMessage);
-			try { File.AppendAllText(InfractionLogPath, logMessage + Environment.NewLine); }
-			catch (Exception ex) { Log.LogError($"Failed to write to infraction log: {ex.Message}"); }
-
-			if (!EnablePunishmentSystem.Value || AtlyssNetworkManager._current._soloMode) return;
-			
-			if (currentInfractions >= maxInfractions)
+			if (EnablePunishmentSystem.Value && !AtlyssNetworkManager._current._soloMode && currentInfractions >= maxInfractions)
 			{
 				if (NetworkServer.active && player != null && HostConsole._current != null && player.connectionToClient != null)
 				{
@@ -199,10 +190,10 @@ namespace HardAntiCheat
                     if (targetPeer != null)
                     {
                         ServerPunishmentCooldown[netId] = Time.time + 60f;
-
                         string action = ActionType.Value.ToLower();
 					    string punishmentDetails = $"Player {playerName} (ID: {playerID}) was automatically {action.ToUpper()}ed for reaching {currentInfractions}/{maxInfractions} infractions.";
-					    Log.LogWarning(punishmentDetails);
+					    
+                        Log.LogWarning(punishmentDetails);
 					    try { File.AppendAllText(InfractionLogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [PUNISHMENT] " + punishmentDetails + Environment.NewLine); }
 					    catch (Exception ex) { Log.LogError($"Failed to write punishment to log: {ex.Message}"); }
                         
@@ -225,7 +216,35 @@ namespace HardAntiCheat
                         Log.LogError($"Could not find PeerListEntry for player {playerName} (netId: {netId}) to take action.");
                     }
 				}
+                return;
 			}
+            
+            string logMessage;
+            if (EnableDetailedLogs.Value)
+            {
+                var sb = new StringBuilder();
+                sb.Append($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}]");
+
+                var segments = new List<string>();
+                if (LogPlayerName.Value) segments.Add($"Player: {playerName}");
+                if (LogPlayerID.Value) segments.Add($"ID: {playerID}");
+                if (segments.Any()) sb.Append(" " + string.Join(" | ", segments));
+
+                sb.Append($" | Type: {cheatType}");
+
+                if (LogInfractionDetails.Value) sb.Append($" | Details: {details}");
+                if (LogInfractionCount.Value) sb.Append($" | Warning {currentInfractions}/{maxInfractions}");
+
+                logMessage = sb.ToString();
+            }
+            else
+            {
+				return;
+            }
+
+			Log.LogWarning(logMessage);
+			try { File.AppendAllText(InfractionLogPath, logMessage + Environment.NewLine); }
+			catch (Exception ex) { Log.LogError($"Failed to write to infraction log: {ex.Message}"); }
 		}
 
         public static void ClearAllPlayerData(uint netId)
@@ -238,6 +257,9 @@ namespace HardAntiCheat
             ServerPlayerInfractionCount.Remove(netId);
             ServerPlayerGracePeriod.Remove(netId);
             ServerPunishmentCooldown.Remove(netId);
+            ServerSpeedCheckCooldowns.Remove(netId);
+            ServerJumpCheckCooldowns.Remove(netId);
+            ServerAirborneCheckCooldowns.Remove(netId);
         }
 	}
     
@@ -304,6 +326,50 @@ namespace HardAntiCheat
     #endregion
 
     #region Speed Hack & Airborne (Fly/InfJump) Protection
+	[HarmonyPatch(typeof(Transform), nameof(Transform.SetPositionAndRotation))]
+	public static class TransformValidationPatch
+	{
+		public static bool Prefix(Transform __instance)
+		{
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
+            
+			// This check is very specific to only catch player teleports.
+			PlayerMove playerMove = __instance.GetComponent<PlayerMove>();
+			if (playerMove != null && !Util.IsHost(playerMove))
+			{
+				// This is a "honeypot." A non-host client should never be directly setting their position on the server.
+				Main.LogInfraction(playerMove, "Movement Hack (Illegal Teleport Method)", "Player directly called Transform.SetPositionAndRotation.");
+				return false; // Block the teleport.
+			}
+			return true;
+		}
+	}
+	[HarmonyPatch(typeof(NetworkTransformBase), nameof(NetworkTransformBase.CmdTeleport), new Type[] { typeof(Vector3), typeof(Quaternion) })]
+	public static class CmdTeleportValidationPatch2
+	{
+		public static bool Prefix(NetworkBehaviour __instance)
+		{
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
+			Player player = __instance.GetComponent<Player>();
+			if (player != null && Main.DisableForHost.Value && player._isHostPlayer) { return true; }
+			Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
+			return false;
+		}
+	}
+	[HarmonyPatch(typeof(NetworkTransformBase), nameof(NetworkTransformBase.CmdTeleport), new Type[] { typeof(Vector3) })]
+	public static class CmdTeleportValidationPatch
+	{
+		public static bool Prefix(NetworkBehaviour __instance)
+		{
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
+			Player player = __instance.GetComponent<Player>();
+			if (player != null && Main.DisableForHost.Value && player._isHostPlayer) { return true; }
+			Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
+			return false;
+		}
+	}
+
+
     [HarmonyPatch(typeof(PlayerMove), "Init_Jump")]
     public static class JumpValidationPatch
     {
@@ -311,119 +377,152 @@ namespace HardAntiCheat
         {
             if (Main.DisableForHost.Value && Util.IsHost(__instance)) return true;
             if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableAirborneChecks.Value) return true;
-            
             uint netId = __instance.netId;
             if (!Main.ServerPlayerAirborneStates.ContainsKey(netId))
-            {
-                Main.ServerPlayerAirborneStates[netId] = new PlayerAirborneData { AirTime = 0f, LastGroundedPosition = __instance.transform.position, ServerSideJumpCount = 0 };
-            }
-            
+	            Main.ServerPlayerAirborneStates[netId] = new PlayerAirborneData { AirTime = 0f, LastGroundedPosition = __instance.transform.position, ServerSideJumpCount = 0, LastVerticalPosition = __instance.transform.position.y, VerticalStallTime = 0f };
             PlayerAirborneData airData = Main.ServerPlayerAirborneStates[netId];
             if(airData.ServerSideJumpCount >= Main.JumpThreshold.Value) { return false; }
-            
             airData.ServerSideJumpCount++;
             Main.ServerPlayerAirborneStates[netId] = airData;
             return true;
         }
     }
-
-	[HarmonyPatch(typeof(PlayerMove), "Update")]
-	public static class MovementAndAirborneValidationPatch
-	{
-		private const float MAX_ALLOWED_AIR_TIME = 10.0f;
-
-		public static void Postfix(PlayerMove __instance)
-		{
-            if (Main.DisableForHost.Value && Util.IsHost(__instance)) return;
-			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || AtlyssNetworkManager._current._soloMode) return;
-
-			uint netId = __instance.netId;
-			if (Main.ServerPlayerGracePeriod.TryGetValue(netId, out float gracePeriodEndTime))
-			{
-				if (Time.time < gracePeriodEndTime) { return; } else { Main.ServerPlayerGracePeriod.Remove(netId); }
-			}
 			
+	[HarmonyPatch(typeof(PlayerMove), "Update")]
+    public static class MovementAndAirborneValidationPatch
+    {
+        private const float MAX_ALLOWED_AIR_TIME = 10.0f;
+        private const float VERTICAL_STALL_TOLERANCE = 0.05f;
+        private const float VERTICAL_STALL_GRACE_PERIOD = 0.5f;
+
+        public static void Postfix(PlayerMove __instance)
+        {
+            if (Main.DisableForHost.Value && Util.IsHost(__instance)) return;
+            if (!NetworkServer.active || !Main.EnableAntiCheat.Value || AtlyssNetworkManager._current._soloMode) return;
+
+            uint netId = __instance.netId;
+            if (Main.ServerPlayerGracePeriod.TryGetValue(netId, out float gracePeriodEndTime))
+            {
+                if (Time.time < gracePeriodEndTime) { return; } else { Main.ServerPlayerGracePeriod.Remove(netId); }
+            }
+
             if (Main.EnableSpeedChecks.Value)
-			{
-				if (Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float initialSpeed))
+            {
+                if (!Main.ServerSpeedCheckCooldowns.ContainsKey(netId) || Time.time > Main.ServerSpeedCheckCooldowns[netId])
                 {
-                    if (__instance.Network_movSpeed > initialSpeed)
+                    if (Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float initialSpeed))
                     {
-                        Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance.Network_movSpeed}. Reverting to initial speed of {initialSpeed}.");
-                        __instance.Network_movSpeed = initialSpeed;
+                        if (__instance._movSpeed >= Main.MaxEffectiveSpeed.Value)
+                        {
+                            Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance._movSpeed}. Reverting to initial speed of {initialSpeed}.");
+                            __instance._movSpeed = initialSpeed;
+                            Main.ServerSpeedCheckCooldowns[netId] = Time.time + Main.SpeedHackDetectionCooldown.Value;
+                        }
                     }
                 }
-			}
+            }
 
-			Vector3 currentPosition = __instance.transform.position;
-			if (Main.EnableMovementChecks.Value)
-			{
-				if (Main.ServerPlayerPositions.TryGetValue(netId, out PlayerPositionData lastPositionData))
-				{
-					if (currentPosition != lastPositionData.Position)
-					{
-						float timeElapsed = Time.time - lastPositionData.Timestamp;
-						if (timeElapsed > Main.MovementTimeThreshold.Value)
-						{
-							float distanceTraveled = Vector3.Distance(lastPositionData.Position, currentPosition);
-							float maxPossibleDistance = (Main.MaxEffectiveSpeed.Value * timeElapsed) + Main.MovementGraceBuffer.Value;
-							if (distanceTraveled > maxPossibleDistance)
-							{
+            Vector3 currentPosition = __instance.transform.position;
+            if (Main.EnableMovementChecks.Value)
+            {
+                if (Main.ServerPlayerPositions.TryGetValue(netId, out PlayerPositionData lastPositionData))
+                {
+                    if (currentPosition != lastPositionData.Position)
+                    {
+                        float timeElapsed = Time.time - lastPositionData.Timestamp;
+                        if (timeElapsed > Main.MovementTimeThreshold.Value)
+                        {
+                            float distanceTraveled = Vector3.Distance(lastPositionData.Position, currentPosition);
+                            float maxPossibleDistance = (Main.MaxEffectiveSpeed.Value * timeElapsed) + Main.MovementGraceBuffer.Value;
+                            if (distanceTraveled > maxPossibleDistance)
+                            {
+                                string cheatType = distanceTraveled > Main.TeleportDistanceThreshold.Value ? "Movement Hack (Teleport)" : "Movement Hack (Speed)";
                                 string details = $"Moved {distanceTraveled:F1} units in {timeElapsed:F2}s. Reverting position.";
-                                foreach(var conn in NetworkServer.connections.Values)
+
+                                foreach (var conn in NetworkServer.connections.Values)
                                 {
-                                    if(conn?.identity == null || conn.identity.netId == netId) continue;
-                                    if(Vector3.Distance(currentPosition, conn.identity.transform.position) < 1.0f)
+                                    if (conn?.identity == null || conn.identity.netId == netId) continue;
+                                    if (Vector3.Distance(currentPosition, conn.identity.transform.position) < 1.0f)
                                     {
                                         details += " Teleported directly to another player.";
+                                        cheatType = "Movement Hack (Teleport)";
                                         break;
                                     }
                                 }
-								Main.LogInfraction(__instance, "Movement Hack (Teleport/Speed)", details);
-								__instance.transform.position = lastPositionData.Position;
+                                Main.LogInfraction(__instance, cheatType, details);
+                                __instance.transform.position = lastPositionData.Position;
                                 Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = lastPositionData.Position, Timestamp = Time.time };
-								return;
-							}
-						}
-					}
-				}
-				Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = currentPosition, Timestamp = Time.time };
-			}
-
-			if (Main.EnableAirborneChecks.Value)
-			{
-                if (__instance._maxJumps > Main.JumpThreshold.Value)
-                {
-                    Main.LogInfraction(__instance, "Stat Manipulation (Max Jumps)", $"Client reported _maxJumps of {__instance._maxJumps}. Reverting to {Main.JumpThreshold.Value}.");
-                    __instance._maxJumps = Main.JumpThreshold.Value;
+                                return;
+                            }
+                        }
+                    }
                 }
-				
-                bool isGrounded = __instance.RayGroundCheck();
-                if (!Main.ServerPlayerAirborneStates.TryGetValue(netId, out PlayerAirborneData airData))
-                { airData = new PlayerAirborneData { AirTime = 0f, LastGroundedPosition = currentPosition, ServerSideJumpCount = 0 }; }
+                Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = currentPosition, Timestamp = Time.time };
+            }
 
-				if (isGrounded)
+            if (Main.EnableAirborneChecks.Value)
+            {
+                if (!Main.ServerJumpCheckCooldowns.ContainsKey(netId) || Time.time > Main.ServerJumpCheckCooldowns[netId])
+                {
+                    if (__instance._maxJumps >= Main.JumpThreshold.Value)
+                    {
+                        Main.LogInfraction(__instance, "Stat Manipulation (Max Jumps)", $"Client reported _maxJumps of {__instance._maxJumps}. Reverting to {Main.JumpThreshold.Value}.");
+                        __instance._maxJumps = Main.JumpThreshold.Value;
+                        Main.ServerJumpCheckCooldowns[netId] = Time.time + Main.JumpHackDetectionCooldown.Value;
+                    }
+                }
+
+                PlayerAirborneData airData = Main.ServerPlayerAirborneStates.ContainsKey(netId)
+                    ? Main.ServerPlayerAirborneStates[netId]
+                    : new PlayerAirborneData { AirTime = 0f, LastGroundedPosition = currentPosition, ServerSideJumpCount = 0, LastVerticalPosition = currentPosition.y, VerticalStallTime = 0f };
+
+                bool isGrounded = __instance.RayGroundCheck();
+
+                if (isGrounded)
                 {
                     airData.AirTime = 0f;
-                    airData.LastGroundedPosition = currentPosition;
                     airData.ServerSideJumpCount = 0;
+                    airData.LastGroundedPosition = currentPosition;
+                    airData.VerticalStallTime = 0f;
                 }
-				else
+                else
                 {
                     airData.AirTime += Time.deltaTime;
-                }
 
-				if (airData.AirTime > MAX_ALLOWED_AIR_TIME)
-				{
-					Main.LogInfraction(__instance, "Movement Hack (Fly/Sustained Jump)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
-					__instance.transform.position = airData.LastGroundedPosition;
-					airData.AirTime = 0f;
+                    // Vertical Stall Detection Logic
+                    if (Mathf.Abs(currentPosition.y - airData.LastVerticalPosition) < VERTICAL_STALL_TOLERANCE)
+                    {
+                        airData.VerticalStallTime += Time.deltaTime;
+                    }
+                    else
+                    {
+                        airData.VerticalStallTime = 0f;
+                    }
+                }
+                
+                airData.LastVerticalPosition = currentPosition.y;
+
+                if (airData.AirTime > MAX_ALLOWED_AIR_TIME)
+                {
+                    // Only trigger if the player is not in a stalled state (e.g., hanging on a ledge).
+                    if (airData.VerticalStallTime < VERTICAL_STALL_GRACE_PERIOD)
+                    {
+                        if (!Main.ServerAirborneCheckCooldowns.ContainsKey(netId) || Time.time > Main.ServerAirborneCheckCooldowns[netId])
+                        {
+                            Main.LogInfraction(__instance, "Movement Hack (Fly/Sustained Jump)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
+                            Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
+                        }
+                    }
+                    
+                    __instance.transform.position = airData.LastGroundedPosition;
+                    airData.AirTime = 0f;
                     airData.ServerSideJumpCount = 0;
-				}
-				Main.ServerPlayerAirborneStates[netId] = airData;
-			}
-		}
-	}
+                    airData.VerticalStallTime = 0f;
+                }
+                Main.ServerPlayerAirborneStates[netId] = airData;
+            }
+        }
+    }
     #endregion
     
     #region Experience and Level Manipulation Protection
@@ -537,6 +636,7 @@ namespace HardAntiCheat
             if (Main.ServerRemainingCooldowns.TryGetValue(netId, out var playerSkills) && playerSkills.ContainsKey(skillToCast.name))
 			{
                 __instance.Server_InterruptCast();
+                Main.LogInfraction(__instance, "Skill Manipulation", $"Attempted to cast {skillToCast.name} like a h4xX0r. Detected as hel.");
 				return false; 
 			}
 
@@ -552,11 +652,11 @@ namespace HardAntiCheat
 	[HarmonyPatch(typeof(AtlyssNetworkManager), "OnServerDisconnect")]
 	public static class PlayerDisconnectPatch
 	{
-		public static void Postfix(NetworkConnectionToClient conn)
+		public static void Postfix(NetworkConnectionToClient _conn)
 		{
-			if (conn?.identity != null)
+			if (_conn?.identity != null)
 			{
-				uint netId = conn.identity.netId;
+				uint netId = _conn.identity.netId;
                 Main.ClearAllPlayerData(netId);
 			}
 		}
