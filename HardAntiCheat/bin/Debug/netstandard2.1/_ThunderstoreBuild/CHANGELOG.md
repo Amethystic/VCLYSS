@@ -10,6 +10,7 @@ Here is the updated file:
 - Added logging choices depending on user choice
 - Patched Teleportation by call
 - Updated Readme (Vx.x.1)
+- Canofwhoopass Bugfix (Thx homebrewery)
 
 ## 1.0.7 - Bugfix - Public Test Update
 - Players getting railed on skill init

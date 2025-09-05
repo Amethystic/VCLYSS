@@ -412,12 +412,17 @@ namespace HardAntiCheat
                 {
                     if (Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float initialSpeed))
                     {
+						// Homebrewery can of whoopass bugfix
                         if (__instance._movSpeed >= Main.MaxEffectiveSpeed.Value)
                         {
                             Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance._movSpeed}. Reverting to initial speed of {initialSpeed}.");
-                            __instance._movSpeed = initialSpeed;
                             Main.ServerSpeedCheckCooldowns[netId] = Time.time + Main.SpeedHackDetectionCooldown.Value;
                         }
+						else if (__instance._movSpeed < 20)
+						{
+                            Main.Log.LogMessage("Yo chill yo u went too low, were not flagging u for this jsut be careful next time okay? good boy/girl");
+                            __instance._movSpeed = initialSpeed;
+						}
                     }
                 }
             }
