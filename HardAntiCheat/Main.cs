@@ -19,17 +19,6 @@ namespace HardAntiCheat
 	public struct PlayerAirborneData { public float AirTime; public Vector3 LastGroundedPosition; public int ServerSideJumpCount; public float LastVerticalPosition; public float VerticalStallTime; }
     #endregion
 
-    #region Utility Class
-    public static class Util
-    {
-	    public static bool IsHost(NetworkBehaviour instance) 
-	    { 
-		    Player player = instance.GetComponent<Player>();
-		    return player != null && player._isHostPlayer;
-	    }
-    }
-    #endregion
-
 	[BepInPlugin(ModInfo.GUID, ModInfo.NAME, ModInfo.VERSION)]
 	[BepInDependency("Marioalexsan.PerfectGuard", BepInDependency.DependencyFlags.SoftDependency)]
 	public class Main : BaseUnityPlugin
@@ -119,22 +108,10 @@ namespace HardAntiCheat
             LogInfractionDetails = Config.Bind("6. Logging", "Log Infraction Details", true, "Include the specific reason/details of the infraction in detailed logs.");
             LogInfractionCount = Config.Bind("6. Logging", "Log Infraction Count", true, "Include the player's current warning count in detailed logs.");
             
-            Config.SettingChanged += OnSettingChanged;
             CheckAndArchiveLogFile();
 			harmony.PatchAll();
 			Log.LogInfo($"[{ModInfo.NAME}] has been loaded. Infractions will be logged to: {InfractionLogPath}");
 		}
-
-		public void OnDestroy()
-        {
-            Config.SettingChanged -= OnSettingChanged;
-            harmony.UnpatchSelf();
-        }
-
-        private void OnSettingChanged(object sender, SettingChangedEventArgs e)
-        {
-            Log.LogInfo($"Configuration setting changed: {e.ChangedSetting.Definition.Key} = {e.ChangedSetting.BoxedValue}");
-        }
 
         private void CheckAndArchiveLogFile()
         {
@@ -299,8 +276,8 @@ namespace HardAntiCheat
 		[HarmonyPrefix]
 		public static bool ValidateRevive(StatusEntity __instance, Player _p)
 		{
-            if (Main.DisableForHost.Value && Util.IsHost(__instance)) return true;
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableReviveChecks.Value) return true;
+			if (Main.DisableForHost.Value) { if (_p._isHostPlayer) Main.Log.LogWarning($"{_p._nickname}'s Host bool is {_p._isHostPlayer} so were not gonna rail them"); return true; }
 			if (__instance.netId == _p.netId)
 			{
 				Main.LogInfraction(__instance, "Unauthorized Action (Self-Revive)", $"Player attempted to revive themselves. Blocked.");
@@ -313,7 +290,8 @@ namespace HardAntiCheat
 		[HarmonyPrefix]
 		public static bool ValidateReplenish(StatusEntity __instance)
 		{
-			if (Main.DisableForHost.Value && Util.IsHost(__instance)) return true;
+			Player player = __instance.GetComponent<Player>();
+			if (Main.DisableForHost.Value) { if (player._isHostPlayer) return true; }
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableReviveChecks.Value) return true;
 			if (__instance.Network_currentHealth <= 0)
 			{
@@ -335,8 +313,11 @@ namespace HardAntiCheat
             
 			// This check is very specific to only catch player teleports.
 			PlayerMove playerMove = __instance.GetComponent<PlayerMove>();
-			if (playerMove != null && !Util.IsHost(playerMove))
+			if (playerMove != null)
 			{
+				Player player = __instance.GetComponent<Player>();
+				if (Main.DisableForHost.Value) { if (player._isHostPlayer) return true; }
+							
 				// This is a "honeypot." A non-host client should never be directly setting their position on the server.
 				Main.LogInfraction(playerMove, "Movement Hack (Illegal Teleport Method)", "Player directly called Transform.SetPositionAndRotation.");
 				return false; // Block the teleport.
@@ -351,7 +332,7 @@ namespace HardAntiCheat
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
 			Player player = __instance.GetComponent<Player>();
-			if (player != null && Main.DisableForHost.Value && player._isHostPlayer) { return true; }
+			if (Main.DisableForHost.Value) { if (player._isHostPlayer) return true; }
 			Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
 			return false;
 		}
@@ -363,7 +344,7 @@ namespace HardAntiCheat
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
 			Player player = __instance.GetComponent<Player>();
-			if (player != null && Main.DisableForHost.Value && player._isHostPlayer) { return true; }
+			if (Main.DisableForHost.Value) { if (player._isHostPlayer) return true; }
 			Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
 			return false;
 		}
@@ -375,8 +356,14 @@ namespace HardAntiCheat
     {
         public static bool Prefix(PlayerMove __instance)
         {
-            if (Main.DisableForHost.Value && Util.IsHost(__instance)) return true;
+            Player player = __instance.GetComponent<Player>();
             if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableAirborneChecks.Value) return true;
+            if (Main.DisableForHost.Value)
+            {
+	            if (!player._isHostPlayer) 
+		            return true;
+            }
+            
             uint netId = __instance.netId;
             if (!Main.ServerPlayerAirborneStates.ContainsKey(netId))
 	            Main.ServerPlayerAirborneStates[netId] = new PlayerAirborneData { AirTime = 0f, LastGroundedPosition = __instance.transform.position, ServerSideJumpCount = 0, LastVerticalPosition = __instance.transform.position.y, VerticalStallTime = 0f };
@@ -397,7 +384,6 @@ namespace HardAntiCheat
 
         public static void Postfix(PlayerMove __instance)
         {
-            if (Main.DisableForHost.Value && Util.IsHost(__instance)) return;
             if (!NetworkServer.active || !Main.EnableAntiCheat.Value || AtlyssNetworkManager._current._soloMode) return;
 
             uint netId = __instance.netId;
@@ -413,14 +399,22 @@ namespace HardAntiCheat
                     if (Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float initialSpeed))
                     {
 						// Homebrewery can of whoopass bugfix
-                        if (__instance._movSpeed >= Main.MaxEffectiveSpeed.Value)
+                        if (__instance._movSpeed > Main.MaxEffectiveSpeed.Value)
                         {
-                            Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance._movSpeed}. Reverting to initial speed of {initialSpeed}.");
-                            Main.ServerSpeedCheckCooldowns[netId] = Time.time + Main.SpeedHackDetectionCooldown.Value;
+	                        if (Main.DisableForHost.Value)
+	                        {
+		                        Player player = __instance.GetComponent<Player>();
+		                        if (!player._isHostPlayer) 
+			                        Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance._movSpeed}. Reverting to initial speed of {initialSpeed}.");
+	                        }
+	                        else
+	                        {
+		                        Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance._movSpeed}. Reverting to initial speed of {initialSpeed}.");
+	                        }
+	                        Main.ServerSpeedCheckCooldowns[netId] = Time.time + Main.SpeedHackDetectionCooldown.Value;
                         }
 						else if (__instance._movSpeed < 20)
 						{
-                            Main.Log.LogMessage("Yo chill yo u went too low, were not flagging u for this jsut be careful next time okay? good boy/girl");
                             __instance._movSpeed = initialSpeed;
 						}
                     }
@@ -447,15 +441,28 @@ namespace HardAntiCheat
                                 foreach (var conn in NetworkServer.connections.Values)
                                 {
                                     if (conn?.identity == null || conn.identity.netId == netId) continue;
-                                    if (Vector3.Distance(currentPosition, conn.identity.transform.position) < 1.0f)
+                                    if (Vector3.Distance(currentPosition, conn.identity.GetComponent<Player>().transform.position) < 1.0f)
                                     {
                                         details += " Teleported directly to another player.";
                                         cheatType = "Movement Hack (Teleport)";
                                         break;
                                     }
                                 }
-                                Main.LogInfraction(__instance, cheatType, details);
-                                __instance.transform.position = lastPositionData.Position;
+                                Player player = __instance.GetComponent<Player>();
+                                if (Main.DisableForHost.Value)
+                                {
+	                                if (!player._isHostPlayer)
+	                                {
+		                                Main.LogInfraction(__instance, cheatType, details);
+		                                __instance.transform.position = lastPositionData.Position;
+	                                }
+                                }
+                                else
+                                {
+	                                Main.LogInfraction(__instance, cheatType, details);
+	                                __instance.transform.position = lastPositionData.Position;
+                                }
+                                
                                 Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = lastPositionData.Position, Timestamp = Time.time };
                                 return;
                             }
@@ -469,11 +476,24 @@ namespace HardAntiCheat
             {
                 if (!Main.ServerJumpCheckCooldowns.ContainsKey(netId) || Time.time > Main.ServerJumpCheckCooldowns[netId])
                 {
-                    if (__instance._maxJumps >= Main.JumpThreshold.Value)
+                    if (__instance._currentJumps >= Main.JumpThreshold.Value)
                     {
-                        Main.LogInfraction(__instance, "Stat Manipulation (Max Jumps)", $"Client reported _maxJumps of {__instance._maxJumps}. Reverting to {Main.JumpThreshold.Value}.");
-                        __instance._maxJumps = Main.JumpThreshold.Value;
-                        Main.ServerJumpCheckCooldowns[netId] = Time.time + Main.JumpHackDetectionCooldown.Value;
+	                    if (Main.DisableForHost.Value)
+	                    {
+		                    Player player = __instance.GetComponent<Player>();
+		                    if (!player._isHostPlayer)
+		                    {
+			                    Main.LogInfraction(__instance, "Stat Manipulation (Overboarded Jumps)", $"Client reported _maxJumps of {__instance._maxJumps}. Reverting to {Main.JumpThreshold.Value}.");
+			                    __instance._maxJumps = 2;
+			                    Main.ServerJumpCheckCooldowns[netId] = Time.time + Main.JumpHackDetectionCooldown.Value;
+		                    }
+	                    }
+	                    else
+	                    {
+		                    Main.LogInfraction(__instance, "Stat Manipulation (Overboarded Jumps)", $"Client reported _maxJumps of {__instance._maxJumps}. Reverting to {Main.JumpThreshold.Value}.");
+		                    __instance._maxJumps = 5;
+		                    Main.ServerJumpCheckCooldowns[netId] = Time.time + Main.JumpHackDetectionCooldown.Value;
+	                    }
                     }
                 }
 
@@ -514,8 +534,20 @@ namespace HardAntiCheat
                     {
                         if (!Main.ServerAirborneCheckCooldowns.ContainsKey(netId) || Time.time > Main.ServerAirborneCheckCooldowns[netId])
                         {
-                            Main.LogInfraction(__instance, "Movement Hack (Fly/Sustained Jump)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
-                            Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
+	                        if (Main.DisableForHost.Value)
+	                        {
+		                        Player player = __instance.GetComponent<Player>();
+		                        if (!player._isHostPlayer) 
+								{
+									Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
+                                    Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
+								}
+	                        }
+	                        else
+	                        {
+		                        Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
+		                        Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
+	                        }
                         }
                     }
                     
@@ -538,7 +570,7 @@ namespace HardAntiCheat
 		[HarmonyPrefix]
 		public static bool ValidateExperienceChange(PlayerStats __instance, ref int value)
 		{
-            if (Main.DisableForHost.Value && Util.IsHost(__instance)) return true;
+			Player player = __instance.GetComponent<Player>();
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableExperienceChecks.Value) return true;
 			
             uint netId = __instance.netId;
@@ -552,6 +584,7 @@ namespace HardAntiCheat
 
 			if (experienceGain > Main.MaxPlausibleXPGain.Value)
 			{
+				if (Main.DisableForHost.Value) { if (player._isHostPlayer)  return true; }
 				Main.LogInfraction(__instance, "Stat Manipulation (Experience)", $"Attempted to gain {experienceGain} XP at once. Blocked.");
 				value = oldExperience;
 			}
@@ -564,7 +597,7 @@ namespace HardAntiCheat
 		[HarmonyPrefix]
 		public static bool ValidateLevelChange(PlayerStats __instance, ref int value)
 		{
-			if (Main.DisableForHost.Value && Util.IsHost(__instance)) return true;
+			Player player = __instance.GetComponent<Player>();
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableExperienceChecks.Value) return true;
 
 			uint netId = __instance.netId;
@@ -577,6 +610,7 @@ namespace HardAntiCheat
 			int levelGain = value - oldLevel;
 			if (levelGain > 1)
 			{
+				if (Main.DisableForHost.Value) { if (player._isHostPlayer) return true; }
 				Main.LogInfraction(__instance, "Stat Manipulation (Level)", $"Attempted to jump from level {oldLevel} to {value}. Blocked.");
 				value = oldLevel;
 			}
@@ -596,8 +630,9 @@ namespace HardAntiCheat
         [HarmonyPostfix]
         public static void CooldownUpdate(PlayerCasting __instance)
         {
+			Player player = __instance.GetComponent<Player>();
+							
             if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableCooldownChecks.Value) return;
-
             uint netId = __instance.netId;
             if (Main.ServerRemainingCooldowns.TryGetValue(netId, out var playerSkills))
             {
@@ -630,7 +665,7 @@ namespace HardAntiCheat
 		[HarmonyPrefix]
 		public static bool UnifiedCooldownValidation(PlayerCasting __instance)
 		{
-            if (Main.DisableForHost.Value && Util.IsHost(__instance)) return true;
+			Player player = __instance.GetComponent<Player>();
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableCooldownChecks.Value) return true;
 
             ScriptableSkill skillToCast = __instance._currentCastSkill;
@@ -638,8 +673,9 @@ namespace HardAntiCheat
 
 			uint netId = __instance.netId;
 			
-            if (Main.ServerRemainingCooldowns.TryGetValue(netId, out var playerSkills) && playerSkills.ContainsKey(skillToCast.name))
+			if (Main.ServerRemainingCooldowns.TryGetValue(netId, out var playerSkills) && playerSkills.ContainsKey(skillToCast.name))
 			{
+				if (Main.DisableForHost.Value) { if (player._isHostPlayer)  return true; }
                 __instance.Server_InterruptCast();
                 Main.LogInfraction(__instance, "Skill Manipulation", $"Attempted to cast {skillToCast.name} like a h4xX0r. Detected as hel.");
 				return false; 
