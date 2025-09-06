@@ -277,7 +277,7 @@ namespace HardAntiCheat
 		public static bool ValidateRevive(StatusEntity __instance, Player _p)
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableReviveChecks.Value) return true;
-			if (Main.DisableForHost.Value) { if (_p._isHostPlayer) Main.Log.LogWarning($"{_p._nickname}'s Host bool is {_p._isHostPlayer} so were not gonna rail them"); return true; }
+			if (Main.DisableForHost.Value) { if (_p._isHostPlayer) Main.Log.LogMessage($"[REVIVE] {_p._nickname} is host so we cant flag them"); return true; }
 			if (__instance.netId == _p.netId)
 			{
 				Main.LogInfraction(__instance, "Unauthorized Action (Self-Revive)", $"Player attempted to revive themselves. Blocked.");
@@ -291,7 +291,7 @@ namespace HardAntiCheat
 		public static bool ValidateReplenish(StatusEntity __instance)
 		{
 			Player player = __instance.GetComponent<Player>();
-			if (Main.DisableForHost.Value) { if (player._isHostPlayer) return true; }
+			if (Main.DisableForHost.Value) { if (player._isHostPlayer) { Main.Log.LogMessage($"[REPLENISH] {player._nickname} is host so we cant flag them"); return true; } }
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableReviveChecks.Value) return true;
 			if (__instance.Network_currentHealth <= 0)
 			{
@@ -316,7 +316,7 @@ namespace HardAntiCheat
 			if (playerMove != null)
 			{
 				Player player = __instance.GetComponent<Player>();
-				if (Main.DisableForHost.Value) { if (player._isHostPlayer) return true; }
+				if (Main.DisableForHost.Value) { if (player._isHostPlayer) { Main.Log.LogMessage($"[TP] {player._nickname} is host so we cant flag them");return true; } }
 							
 				// This is a "honeypot." A non-host client should never be directly setting their position on the server.
 				Main.LogInfraction(playerMove, "Movement Hack (Illegal Teleport Method)", "Player directly called Transform.SetPositionAndRotation.");
@@ -332,7 +332,7 @@ namespace HardAntiCheat
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
 			Player player = __instance.GetComponent<Player>();
-			if (Main.DisableForHost.Value) { if (player._isHostPlayer) return true; }
+			if (Main.DisableForHost.Value) { if (player._isHostPlayer) { Main.Log.LogMessage($"[TP] {player._nickname} is host so we cant flag them"); return true; } }
 			Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
 			return false;
 		}
@@ -344,7 +344,7 @@ namespace HardAntiCheat
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
 			Player player = __instance.GetComponent<Player>();
-			if (Main.DisableForHost.Value) { if (player._isHostPlayer) return true; }
+			if (Main.DisableForHost.Value) { if (player._isHostPlayer) { Main.Log.LogMessage($"[TP] {player._nickname} is host so we cant flag them"); return true; } }
 			Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
 			return false;
 		}
@@ -360,8 +360,11 @@ namespace HardAntiCheat
             if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableAirborneChecks.Value) return true;
             if (Main.DisableForHost.Value)
             {
-	            if (!player._isHostPlayer) 
+	            if (!player._isHostPlayer)
+	            {
+		            Main.Log.LogMessage($"[PMOVE] {player._nickname} is host so we cant flag them");
 		            return true;
+	            }
             }
             
             uint netId = __instance.netId;
@@ -404,8 +407,14 @@ namespace HardAntiCheat
 	                        if (Main.DisableForHost.Value)
 	                        {
 		                        Player player = __instance.GetComponent<Player>();
-		                        if (!player._isHostPlayer) 
-			                        Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance._movSpeed}. Reverting to initial speed of {initialSpeed}.");
+		                        if (!player._isHostPlayer)
+		                        {
+									Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance._movSpeed}. Reverting to initial speed of {initialSpeed}.");Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance._movSpeed}. Reverting to initial speed of {initialSpeed}.");
+		                        }
+		                        else
+		                        {
+			                        Main.Log.LogMessage($"[SPEED] {player._nickname} is host so we cant flag them");
+		                        }
 	                        }
 	                        else
 	                        {
@@ -456,6 +465,10 @@ namespace HardAntiCheat
 		                                Main.LogInfraction(__instance, cheatType, details);
 		                                __instance.transform.position = lastPositionData.Position;
 	                                }
+	                                else
+	                                {
+		                                Main.Log.LogMessage($"[DISTANCE] {player._nickname} is host so we cant flag them");
+	                                }
                                 }
                                 else
                                 {
@@ -476,7 +489,7 @@ namespace HardAntiCheat
             {
                 if (!Main.ServerJumpCheckCooldowns.ContainsKey(netId) || Time.time > Main.ServerJumpCheckCooldowns[netId])
                 {
-                    if (__instance._currentJumps >= Main.JumpThreshold.Value)
+                    if (__instance._maxJumps >= Main.JumpThreshold.Value)
                     {
 	                    if (Main.DisableForHost.Value)
 	                    {
@@ -487,6 +500,10 @@ namespace HardAntiCheat
 			                    __instance._maxJumps = 2;
 			                    Main.ServerJumpCheckCooldowns[netId] = Time.time + Main.JumpHackDetectionCooldown.Value;
 		                    }
+							else
+							{
+								Main.Log.LogMessage($"[JUMPS] {player._nickname} is host so we cant flag them");
+							}
 	                    }
 	                    else
 	                    {
@@ -542,6 +559,10 @@ namespace HardAntiCheat
 									Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
                                     Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
 								}
+								else
+								{
+									Main.Log.LogMessage($"[FLY] {player._nickname} is host so we cant flag them");
+								}
 	                        }
 	                        else
 	                        {
@@ -584,7 +605,14 @@ namespace HardAntiCheat
 
 			if (experienceGain > Main.MaxPlausibleXPGain.Value)
 			{
-				if (Main.DisableForHost.Value) { if (player._isHostPlayer)  return true; }
+				if (Main.DisableForHost.Value)
+				{
+					if (player._isHostPlayer)  
+					{
+						Main.Log.LogMessage($"[XP] {player._nickname} is host so we cant flag them");
+						return true;
+					}
+				}
 				Main.LogInfraction(__instance, "Stat Manipulation (Experience)", $"Attempted to gain {experienceGain} XP at once. Blocked.");
 				value = oldExperience;
 			}
@@ -610,7 +638,7 @@ namespace HardAntiCheat
 			int levelGain = value - oldLevel;
 			if (levelGain > 1)
 			{
-				if (Main.DisableForHost.Value) { if (player._isHostPlayer) return true; }
+				if (Main.DisableForHost.Value) { if (player._isHostPlayer) { Main.Log.LogMessage($"[LVL] {player._nickname} is host so we cant flag them"); return true; } }
 				Main.LogInfraction(__instance, "Stat Manipulation (Level)", $"Attempted to jump from level {oldLevel} to {value}. Blocked.");
 				value = oldLevel;
 			}
@@ -675,7 +703,7 @@ namespace HardAntiCheat
 			
 			if (Main.ServerRemainingCooldowns.TryGetValue(netId, out var playerSkills) && playerSkills.ContainsKey(skillToCast.name))
 			{
-				if (Main.DisableForHost.Value) { if (player._isHostPlayer)  return true; }
+				if (Main.DisableForHost.Value) { if (player._isHostPlayer) { Main.Log.LogMessage($"[COOLDOWN] {player._nickname} is host so we cant flag them"); return true; } }
                 __instance.Server_InterruptCast();
                 Main.LogInfraction(__instance, "Skill Manipulation", $"Attempted to cast {skillToCast.name} like a h4xX0r. Detected as hel.");
 				return false; 
