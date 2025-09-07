@@ -1,7 +1,5 @@
 # Changelog
 
-##
-
 <details><summary>Public Test Updates</summary>
 
 ## V2 - Reforctory - Public Test Update (Updated each V2 revision/build)
@@ -56,5 +54,6 @@
 ## Shh, these are silent updates - just fixes and stuff (Some might not be on here)
 - New logo
 - Tinker Tappers
+- shh CHANGELOG.md incident
 
 </details>
