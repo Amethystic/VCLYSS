@@ -1,7 +1,3 @@
-Of course. I have written the changelog entry for version 1.0.6 to reflect the latest quality-of-life improvements and critical bug fixes.
-
-Here is the updated file:
-
 # Changelog
 ## V2 - Reforctory - Public Test Update
 - Fixes "Players getting railed on skill init still" FULLY
