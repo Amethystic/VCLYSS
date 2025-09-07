@@ -1,5 +1,10 @@
 # Changelog
-## V2 - Reforctory - Public Test Update
+
+##
+
+<details><summary>Public Test Updates</summary>
+
+## V2 - Reforctory - Public Test Update (Updated each V2 revision/build)
 - Fixes "Players getting railed on skill init still" FULLY
 - Fixed fly/movement checks
 - Fixed host bool issue
@@ -8,7 +13,6 @@
 - Updated Readme (Vx.x.1)
 - Canofwhoopass Bugfix (Thx homebrewery)
 - Fixed isHost bug
-- New logo
 
 ## 1.0.7 - Bugfix - Public Test Update
 - Players getting railed on skill init
@@ -42,3 +46,15 @@
 
 ## 1.0.0
 - Initial release
+- 
+</details>
+
+##
+
+<details><summary>Silent Updates</summary>
+
+## Shh, these are silent updates - just fixes and stuff (Some might not be on here)
+- New logo
+- Tinker Tappers
+
+</details>
