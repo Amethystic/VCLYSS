@@ -6,6 +6,6 @@ namespace HardAntiCheat
     {
         public const string GUID = "com.HardAntiCheat.sftwre";
         public const string NAME = "HardAntiCheat";
-        public const string VERSION = "2.0.4";
+        public const string VERSION = "2.0.5";
     }
 }

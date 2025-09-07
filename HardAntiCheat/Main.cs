@@ -277,7 +277,7 @@ namespace HardAntiCheat
 		public static bool ValidateRevive(StatusEntity __instance, Player _p)
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableReviveChecks.Value) return true;
-			if (Main.DisableForHost.Value) { if (_p._isHostPlayer) Main.Log.LogMessage($"[REVIVE] {_p._nickname} is host so we cant flag them"); return true; }
+			if (Main.DisableForHost.Value) { if (_p._isHostPlayer) return true; }
 			if (__instance.netId == _p.netId)
 			{
 				Main.LogInfraction(__instance, "Unauthorized Action (Self-Revive)", $"Player attempted to revive themselves. Blocked.");
@@ -291,7 +291,7 @@ namespace HardAntiCheat
 		public static bool ValidateReplenish(StatusEntity __instance)
 		{
 			Player player = __instance.GetComponent<Player>();
-			if (Main.DisableForHost.Value) { if (player._isHostPlayer) { Main.Log.LogMessage($"[REPLENISH] {player._nickname} is host so we cant flag them"); return true; } }
+			if (Main.DisableForHost.Value) { if (player._isHostPlayer) { return true; } }
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableReviveChecks.Value) return true;
 			if (__instance.Network_currentHealth <= 0)
 			{
