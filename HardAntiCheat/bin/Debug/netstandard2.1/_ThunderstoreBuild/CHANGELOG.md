@@ -10,7 +10,7 @@
 - Patched Teleportation by call
 - Updated Readme (Vx.x.1)
 - Canofwhoopass Bugfix (Thx homebrewery)
-- Airborne Height limiting check
+- Airborne Height limiting check (Allows you to fly within the height limit)
 - Fixed isHost bug
 - Fixed Revive detection logic
 

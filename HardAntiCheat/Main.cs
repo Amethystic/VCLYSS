@@ -403,7 +403,7 @@ namespace HardAntiCheat
         private const float VERTICAL_STALL_TOLERANCE = 0.05f;
         private const float VERTICAL_STALL_GRACE_PERIOD = 0.5f;
         // NEW: Define the maximum allowed vertical height for players.
-        private const float MAX_FLIGHT_HEIGHT = 5000f;
+        private const float MAX_FLIGHT_HEIGHT = 4240f;
 
         public static void Postfix(PlayerMove __instance)
         {
