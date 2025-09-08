@@ -65,5 +65,6 @@ Example:
 - New logo
 - Tinker Tappers
 - shh CHANGELOG.md incident (x2)
+- Fixed Damage thing lol
 
 </details>
