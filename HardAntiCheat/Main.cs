@@ -9,6 +9,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace HardAntiCheat
 {
@@ -67,6 +68,7 @@ namespace HardAntiCheat
         public static readonly Dictionary<uint, float> ServerSpeedCheckCooldowns = new Dictionary<uint, float>();
         public static readonly Dictionary<uint, float> ServerJumpCheckCooldowns = new Dictionary<uint, float>();
         public static readonly Dictionary<uint, float> ServerAirborneCheckCooldowns = new Dictionary<uint, float>();
+        public static readonly Dictionary<uint, float> AuthorizedSelfRevives = new Dictionary<uint, float>();
 		
 		private void Awake()
 		{
@@ -267,7 +269,84 @@ namespace HardAntiCheat
 		}
 	}
     #endregion
-    
+	
+    #region UI Button Watcher
+    [HarmonyPatch]
+    public static class ButtonPressValidationPatch
+    {
+        private static DeathPromptManager _deathPromptManagerInstance;
+
+        // We patch the fundamental "Press" method in the UnityEngine.UI.Button class itself.
+        [HarmonyPatch(typeof(UnityEngine.UI.Button), "Press")]
+        [HarmonyPrefix]
+        public static bool OnButtonPress(UnityEngine.UI.Button __instance)
+        {
+            // --- This code runs on the CLIENT for EVERY button click ---
+
+            // First, find the DeathPromptManager instance if we haven't already.
+            if (_deathPromptManagerInstance == null)
+            {
+                _deathPromptManagerInstance = UnityEngine.Object.FindObjectOfType<DeathPromptManager>();
+                if (_deathPromptManagerInstance == null) return true; // Can't do anything if it doesn't exist.
+            }
+
+            // Get the specific "_useTearButton" instance from the manager.
+            Button tearButton = Traverse.Create(_deathPromptManagerInstance).Field<Button>("_useTearButton").Value;
+
+            // Is the button that was just pressed (__instance) the tear button we care about?
+            if (tearButton != null && __instance == tearButton)
+            {
+                // IT IS. We have 100% confirmed the correct button was physically clicked.
+                // Now, we perform the secure handshake.
+
+                Player mainPlayer = Player._mainPlayer;
+                if (mainPlayer != null)
+                {
+                    PlayerInventory inventory = mainPlayer.GetComponent<PlayerInventory>();
+                    if (inventory != null)
+                    {
+                        // Find the tear in the inventory to pass to the EXISTING Cmd_UseConsumable command.
+                        foreach (ItemData item in inventory._heldItems)
+                        {
+                            if (item != null && item._itemName == "Angela's Tear")
+                            {
+                                // Send the command. This will be intercepted by our server-side patch.
+                                inventory.Cmd_UseConsumable(item);
+
+                                // IMPORTANT: Return TRUE to allow the original Press() method to finish.
+                                // This ensures the button provides visual feedback (like flashing).
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If it wasn't the tear button, just let it function normally.
+            return true;
+        }
+    }
+    #endregion
+	
+	#region Item Usage Validation
+	[HarmonyPatch]
+	public static class ItemUsageValidationPatch
+	{
+		// This patch targets the SERVER'S code for when it RECEIVES a Cmd_UseConsumable request.
+		[HarmonyPatch(typeof(PlayerInventory), "UserCode_Cmd_UseConsumable__ItemData")]
+		[HarmonyPrefix]
+		public static void GrantTokenOnTearUsage(PlayerInventory __instance, ItemData _itemData)
+		{
+			if (!NetworkServer.active) return;
+
+			if (_itemData != null && _itemData._itemName == "Angela's Tear")
+			{
+				Main.AuthorizedSelfRevives[__instance.netId] = Time.time;
+			}
+		}
+	}
+    #endregion
+	
     #region Server Authority Protection (Self-Revive)
 	[HarmonyPatch]
 	public static class ServerAuthorityValidationPatch
@@ -277,10 +356,11 @@ namespace HardAntiCheat
 		public static bool ValidateRevive(StatusEntity __instance, Player _p)
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableReviveChecks.Value) return true;
-			if (Main.DisableForHost.Value) { if (_p._isHostPlayer) return true; }
+			if (Main.DisableForHost.Value && _p._isHostPlayer) return true;
+
 			if (__instance.netId == _p.netId)
 			{
-				Main.LogInfraction(__instance, "Unauthorized Action (Self-Revive)", $"Player attempted to revive themselves. Blocked.");
+				Main.LogInfraction(__instance, "Unauthorized Action (Direct Self-Revive)", "Blocked direct call to self-revive.");
 				return false;
 			}
 			return true;
@@ -291,20 +371,33 @@ namespace HardAntiCheat
 		public static bool ValidateReplenish(StatusEntity __instance)
 		{
 			Player player = __instance.GetComponent<Player>();
-			if (Main.DisableForHost.Value) { if (player._isHostPlayer) { return true; } }
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableReviveChecks.Value) return true;
+			if (Main.DisableForHost.Value && player._isHostPlayer) return true;
+
 			if (__instance.Network_currentHealth <= 0)
 			{
-				Main.LogInfraction(__instance, "Unauthorized Action (Replenish while Dead)", $"Player attempted to replenish HP/MP while dead. Blocked.");
-				return false;
+				uint netId = player.netId;
+				if (Main.AuthorizedSelfRevives.TryGetValue(netId, out float timestamp))
+				{
+					if (Time.time - timestamp < 1.5f)
+					{
+						Main.AuthorizedSelfRevives.Remove(netId);
+						return true; // <<<--- ALLOW (Legitimate, button-authorized action)
+					}
+				}
+				
+				// A token was not found or was expired. This is an illegitimate call.
+				Main.LogInfraction(__instance, "Unauthorized Action (Replenish while Dead)", "Blocked replenish call - was not authorized by UI button press.");
+				return false; // <<<--- DENY
 			}
+			
 			return true;
 		}
 	}
     #endregion
 
     #region Speed Hack & Airborne (Fly/InfJump) Protection
-	[HarmonyPatch(typeof(Transform), nameof(Transform.SetPositionAndRotation))]
+	[HarmonyPatch(typeof(Transform), nameof(Transform.SetPositionAndRotation), new Type[] { typeof(Vector3), typeof(Quaternion) })]
 	public static class TransformValidationPatch
 	{
 		public static bool Prefix(Transform __instance)
@@ -317,9 +410,8 @@ namespace HardAntiCheat
 			{
 				Player player = __instance.GetComponent<Player>();
 				if (Main.DisableForHost.Value) { if (player._isHostPlayer) { return true; } }
-							
-				// This is a "honeypot." A non-host client should never be directly setting their position on the server.
 				Main.LogInfraction(playerMove, "Movement Hack (Illegal Teleport Method)", "Player directly called Transform.SetPositionAndRotation.");
+				player._statusEntity.Subtract_Health(99999);
 				return false; // Block the teleport.
 			}
 			return true;
@@ -334,6 +426,7 @@ namespace HardAntiCheat
 			Player player = __instance.GetComponent<Player>();
 			if (Main.DisableForHost.Value) { if (player._isHostPlayer) {  return true; } }
 			Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
+			player._statusEntity.Subtract_Health(99999);
 			return false;
 		}
 	}
@@ -346,6 +439,7 @@ namespace HardAntiCheat
 			Player player = __instance.GetComponent<Player>();
 			if (Main.DisableForHost.Value) { if (player._isHostPlayer) { return true; } }
 			Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
+			player._statusEntity.Subtract_Health(99999);
 			return false;
 		}
 	}
@@ -387,7 +481,7 @@ namespace HardAntiCheat
         public static void Postfix(PlayerMove __instance)
         {
             if (!NetworkServer.active || !Main.EnableAntiCheat.Value || AtlyssNetworkManager._current._soloMode) return;
-
+            Player player = __instance.GetComponent<Player>();
             uint netId = __instance.netId;
             if (Main.ServerPlayerGracePeriod.TryGetValue(netId, out float gracePeriodEndTime))
             {
@@ -405,21 +499,22 @@ namespace HardAntiCheat
                         {
 	                        if (Main.DisableForHost.Value)
 	                        {
-		                        Player player = __instance.GetComponent<Player>();
 		                        if (!player._isHostPlayer)
 		                        {
 									Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance._movSpeed}. Reverting to initial speed of {initialSpeed}.");Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance._movSpeed}. Reverting to initial speed of {initialSpeed}.");
+									__instance.Reset_MoveSpeed();
 		                        }
 	                        }
 	                        else
 	                        {
 		                        Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance._movSpeed}. Reverting to initial speed of {initialSpeed}.");
+		                        __instance.Reset_MoveSpeed();
 	                        }
 	                        Main.ServerSpeedCheckCooldowns[netId] = Time.time + Main.SpeedHackDetectionCooldown.Value;
                         }
 						else if (__instance._movSpeed < 20)
 						{
-                            __instance._movSpeed = initialSpeed;
+                            __instance.Reset_MoveSpeed();
 						}
                     }
                 }
@@ -452,19 +547,20 @@ namespace HardAntiCheat
                                         break;
                                     }
                                 }
-                                Player player = __instance.GetComponent<Player>();
                                 if (Main.DisableForHost.Value)
                                 {
 	                                if (!player._isHostPlayer)
 	                                {
 		                                Main.LogInfraction(__instance, cheatType, details);
-		                                __instance.transform.position = lastPositionData.Position;
+		                                player.transform.position = lastPositionData.Position;
+		                                player._statusEntity.Subtract_Health(99999);
 	                                }
                                 }
                                 else
                                 {
 	                                Main.LogInfraction(__instance, cheatType, details);
-	                                __instance.transform.position = lastPositionData.Position;
+	                                player.transform.position = lastPositionData.Position;
+	                                player._statusEntity.Subtract_Health(99999);
                                 }
                                 
                                 Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = lastPositionData.Position, Timestamp = Time.time };
@@ -484,19 +580,20 @@ namespace HardAntiCheat
                     {
 	                    if (Main.DisableForHost.Value)
 	                    {
-		                    Player player = __instance.GetComponent<Player>();
 		                    if (!player._isHostPlayer)
 		                    {
 			                    Main.LogInfraction(__instance, "Stat Manipulation (Overboarded Jumps)", $"Client reported _maxJumps of {__instance._maxJumps}. Reverting to {Main.JumpThreshold.Value}.");
 			                    __instance._maxJumps = 2;
 			                    Main.ServerJumpCheckCooldowns[netId] = Time.time + Main.JumpHackDetectionCooldown.Value;
+								player._statusEntity.Subtract_Health(99999);
 		                    }
 	                    }
 	                    else
 	                    {
 		                    Main.LogInfraction(__instance, "Stat Manipulation (Overboarded Jumps)", $"Client reported _maxJumps of {__instance._maxJumps}. Reverting to {Main.JumpThreshold.Value}.");
-		                    __instance._maxJumps = 5;
+		                    __instance._maxJumps = 2;
 		                    Main.ServerJumpCheckCooldowns[netId] = Time.time + Main.JumpHackDetectionCooldown.Value;
+		                    player._statusEntity.Subtract_Health(99999);
 	                    }
                     }
                 }
@@ -540,17 +637,18 @@ namespace HardAntiCheat
                         {
 	                        if (Main.DisableForHost.Value)
 	                        {
-		                        Player player = __instance.GetComponent<Player>();
 		                        if (!player._isHostPlayer) 
 								{
 									Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
                                     Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
+                                    player._statusEntity.Subtract_Health(99999);
 								}
 	                        }
 	                        else
 	                        {
 		                        Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
 		                        Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
+		                        player._statusEntity.Subtract_Health(99999);
 	                        }
                         }
                     }
@@ -632,7 +730,7 @@ namespace HardAntiCheat
 	}
     #endregion
 
-    #region Skill Cooldown Protection (REWRITTEN)
+    #region Skill Cooldown Protection
 	[HarmonyPatch]
 	public static class CombatValidationPatch
 	{
