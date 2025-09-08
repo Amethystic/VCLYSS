@@ -396,87 +396,14 @@ namespace HardAntiCheat
 	}
     #endregion
 
-    #region Speed Hack & Airborne (Fly/InfJump) Protection
-	[HarmonyPatch(typeof(Transform), nameof(Transform.SetPositionAndRotation), new Type[] { typeof(Vector3), typeof(Quaternion) })]
-	public static class TransformValidationPatch
-	{
-		public static bool Prefix(Transform __instance)
-		{
-			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
-            
-			// This check is very specific to only catch player teleports.
-			PlayerMove playerMove = __instance.GetComponent<PlayerMove>();
-			if (playerMove != null)
-			{
-				Player player = __instance.GetComponent<Player>();
-				if (Main.DisableForHost.Value) { if (player._isHostPlayer) { return true; } }
-				Main.LogInfraction(playerMove, "Movement Hack (Illegal Teleport Method)", "Player directly called Transform.SetPositionAndRotation.");
-
-				return false; // Block the teleport.
-			}
-			return true;
-		}
-	}
-	[HarmonyPatch(typeof(NetworkTransformBase), nameof(NetworkTransformBase.CmdTeleport), new Type[] { typeof(Vector3), typeof(Quaternion) })]
-	public static class CmdTeleportValidationPatch2
-	{
-		public static bool Prefix(NetworkBehaviour __instance)
-		{
-			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
-			Player player = __instance.GetComponent<Player>();
-			if (Main.DisableForHost.Value) { if (player._isHostPlayer) {  return true; } }
-			Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
-			
-			return false;
-		}
-	}
-	[HarmonyPatch(typeof(NetworkTransformBase), nameof(NetworkTransformBase.CmdTeleport), new Type[] { typeof(Vector3) })]
-	public static class CmdTeleportValidationPatch
-	{
-		public static bool Prefix(NetworkBehaviour __instance)
-		{
-			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
-			Player player = __instance.GetComponent<Player>();
-			if (Main.DisableForHost.Value) { if (player._isHostPlayer) { return true; } }
-			Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
-			
-			return false;
-		}
-	}
-
-
-    [HarmonyPatch(typeof(PlayerMove), "Init_Jump")]
-    public static class JumpValidationPatch
-    {
-        public static bool Prefix(PlayerMove __instance)
-        {
-            Player player = __instance.GetComponent<Player>();
-            if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableAirborneChecks.Value) return true;
-            if (Main.DisableForHost.Value)
-            {
-	            if (!player._isHostPlayer)
-	            {
-		            return true;
-	            }
-            }
-            
-            uint netId = __instance.netId;
-            if (!Main.ServerPlayerAirborneStates.ContainsKey(netId))
-	            Main.ServerPlayerAirborneStates[netId] = new PlayerAirborneData { AirTime = 0f, LastGroundedPosition = __instance.transform.position, ServerSideJumpCount = 0, LastVerticalPosition = __instance.transform.position.y, VerticalStallTime = 0f };
-            PlayerAirborneData airData = Main.ServerPlayerAirborneStates[netId];
-            if(airData.ServerSideJumpCount >= Main.JumpThreshold.Value) { return false; }
-            airData.ServerSideJumpCount++;
-            Main.ServerPlayerAirborneStates[netId] = airData;
-            return true;
-        }
-    }
-			
-	[HarmonyPatch(typeof(PlayerMove), "Update")]
+    	[HarmonyPatch(typeof(PlayerMove), "Update")]
     public static class MovementAndAirborneValidationPatch
     {
         private const float MAX_ALLOWED_AIR_TIME = 10.0f;
         private const float VERTICAL_STALL_TOLERANCE = 0.05f;
         private const float VERTICAL_STALL_GRACE_PERIOD = 0.5f;
+        // NEW: Define the maximum allowed vertical height for players.
+        private const float MAX_FLIGHT_HEIGHT = 5000f;
 
         public static void Postfix(PlayerMove __instance)
         {
@@ -572,6 +499,10 @@ namespace HardAntiCheat
 
             if (Main.EnableAirborneChecks.Value)
             {
+                PlayerAirborneData airData = Main.ServerPlayerAirborneStates.ContainsKey(netId)
+                    ? Main.ServerPlayerAirborneStates[netId]
+                    : new PlayerAirborneData { AirTime = 0f, LastGroundedPosition = currentPosition, ServerSideJumpCount = 0, LastVerticalPosition = currentPosition.y, VerticalStallTime = 0f };
+
                 if (!Main.ServerJumpCheckCooldowns.ContainsKey(netId) || Time.time > Main.ServerJumpCheckCooldowns[netId])
                 {
                     if (__instance._maxJumps >= Main.JumpThreshold.Value)
@@ -593,10 +524,6 @@ namespace HardAntiCheat
 	                    }
                     }
                 }
-
-                PlayerAirborneData airData = Main.ServerPlayerAirborneStates.ContainsKey(netId)
-                    ? Main.ServerPlayerAirborneStates[netId]
-                    : new PlayerAirborneData { AirTime = 0f, LastGroundedPosition = currentPosition, ServerSideJumpCount = 0, LastVerticalPosition = currentPosition.y, VerticalStallTime = 0f };
 
                 bool isGrounded = __instance.RayGroundCheck();
 
@@ -623,28 +550,30 @@ namespace HardAntiCheat
                 }
                 
                 airData.LastVerticalPosition = currentPosition.y;
-
-                if (airData.AirTime > MAX_ALLOWED_AIR_TIME)
+                
+                if (currentPosition.y > MAX_FLIGHT_HEIGHT)
                 {
-                    // Only trigger if the player is not in a stalled state (e.g., hanging on a ledge).
-                    if (airData.VerticalStallTime < VERTICAL_STALL_GRACE_PERIOD)
+                    if (airData.AirTime > MAX_ALLOWED_AIR_TIME)
                     {
-                        if (!Main.ServerAirborneCheckCooldowns.ContainsKey(netId) || Time.time > Main.ServerAirborneCheckCooldowns[netId])
-                        {
-	                        if (Main.DisableForHost.Value)
-	                        {
-		                        if (!player._isHostPlayer) 
-								{
-									Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
-                                    Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
-								}
-	                        }
-	                        else
-	                        {
-		                        Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
-		                        Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
-	                        }
-                        }
+	                    if (airData.VerticalStallTime < VERTICAL_STALL_GRACE_PERIOD)
+	                    {
+		                    if (!Main.ServerAirborneCheckCooldowns.ContainsKey(netId) || Time.time > Main.ServerAirborneCheckCooldowns[netId])
+		                    {
+			                    if (Main.DisableForHost.Value)
+			                    {
+				                    if (!player._isHostPlayer) 
+				                    {
+					                    Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
+					                    Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
+				                    }
+			                    }
+			                    else
+			                    {
+				                    Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
+				                    Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
+			                    }
+		                    }
+	                    }
                     }
                     
                     __instance.transform.position = airData.LastGroundedPosition;
@@ -656,7 +585,6 @@ namespace HardAntiCheat
             }
         }
     }
-    #endregion
     
     #region Experience and Level Manipulation Protection
 	[HarmonyPatch]
