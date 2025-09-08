@@ -19,7 +19,7 @@ These mods are not required dependencies but are confirmed to be compatible and 
 
 | **Mod Name**                                                                  | **Description**                                              |
 | ----------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| [PerfectGuard](https://thunderstore.io/c/atlyss/p/Marioalexsan/PerfectGuard/) | Adds a client-side perfect guard / parry mechanic to combat. |
+| [PerfectGuard](https://thunderstore.io/c/atlyss/p/Marioalexsan/PerfectGuard/) | Work in progress anti-exploit mod for server hosts. |
 
 ---
 
