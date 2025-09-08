@@ -11,6 +11,16 @@
 - Updated Readme (Vx.x.1)
 - Canofwhoopass Bugfix (Thx homebrewery)
 - Fixed isHost bug
+- Fixed Revive detection logic
+
+- In-Game Logical Actions 
+Example: 
++ Airborne?: Kills.
++ Teleportation?: Kills.
++ Too many jumps?: Kills.
++ Too Fast?: Attempts to reset.
++ Cooldown modified?: Interrupts your sklill.
++ Died but revived by menu?: You will be unable to revive by a mod menu, use angela's tears instead.
 
 ## 1.0.7 - Bugfix - Public Test Update
 - Players getting railed on skill init
@@ -44,7 +54,7 @@
 
 ## 1.0.0
 - Initial release
-- 
+
 </details>
 
 ##
@@ -54,6 +64,6 @@
 ## Shh, these are silent updates - just fixes and stuff (Some might not be on here)
 - New logo
 - Tinker Tappers
-- shh CHANGELOG.md incident
+- shh CHANGELOG.md incident (x2)
 
 </details>
