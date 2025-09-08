@@ -15,9 +15,9 @@
 
 - In-Game Logical Actions 
 Example: 
-+ Airborne?: Kills.
-+ Teleportation?: Kills.
-+ Too many jumps?: Kills.
++ Airborne?: Kills. (Scrapped)
++ Teleportation?: Kills. (Scrapped)
++ Too many jumps?: Kills. (Scrapped)
 + Too Fast?: Attempts to reset.
 + Cooldown modified?: Interrupts your sklill.
 + Died but revived by menu?: You will be unable to revive by a mod menu, use angela's tears instead.
@@ -65,6 +65,6 @@ Example:
 - New logo
 - Tinker Tappers
 - shh CHANGELOG.md incident (x2)
-- Fixed Damage thing lol
+- scraped damage idea
 
 </details>
