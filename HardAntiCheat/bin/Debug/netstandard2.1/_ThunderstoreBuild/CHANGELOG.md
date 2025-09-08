@@ -13,11 +13,8 @@
 - Fixed isHost bug
 - Fixed Revive detection logic
 
-- In-Game Logical Actions 
-Example: 
-+ Airborne?: Kills. (Scrapped)
-+ Teleportation?: Kills. (Scrapped)
-+ Too many jumps?: Kills. (Scrapped)
+- In-Game Logical Actions fixes
+Example:
 + Too Fast?: Attempts to reset.
 + Cooldown modified?: Interrupts your sklill.
 + Died but revived by menu?: You will be unable to revive by a mod menu, use angela's tears instead.

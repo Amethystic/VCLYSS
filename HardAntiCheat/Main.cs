@@ -411,7 +411,7 @@ namespace HardAntiCheat
 				Player player = __instance.GetComponent<Player>();
 				if (Main.DisableForHost.Value) { if (player._isHostPlayer) { return true; } }
 				Main.LogInfraction(playerMove, "Movement Hack (Illegal Teleport Method)", "Player directly called Transform.SetPositionAndRotation.");
-				//__instance.GetComponent<Player>()._statusEntity.Cmd_TakeDamage(99999, Single.MaxValue, DamageWeight.Heavy, Vector3.up, Vector3.down);
+
 				return false; // Block the teleport.
 			}
 			return true;
@@ -426,7 +426,7 @@ namespace HardAntiCheat
 			Player player = __instance.GetComponent<Player>();
 			if (Main.DisableForHost.Value) { if (player._isHostPlayer) {  return true; } }
 			Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
-			//__instance.GetComponent<Player>()._statusEntity.Cmd_TakeDamage(99999, Single.MaxValue, DamageWeight.Heavy, Vector3.up, Vector3.down);			Player playerc = __instance.GetComponent<Player>();
+			
 			return false;
 		}
 	}
@@ -439,7 +439,7 @@ namespace HardAntiCheat
 			Player player = __instance.GetComponent<Player>();
 			if (Main.DisableForHost.Value) { if (player._isHostPlayer) { return true; } }
 			Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
-			//__instance.GetComponent<Player>()._statusEntity.Cmd_TakeDamage(99999, Single.MaxValue, DamageWeight.Heavy, Vector3.up, Vector3.down);			Player playerc = __instance.GetComponent<Player>();
+			
 			return false;
 		}
 	}
@@ -553,14 +553,12 @@ namespace HardAntiCheat
 	                                {
 		                                Main.LogInfraction(__instance, cheatType, details);
 		                                player.transform.position = lastPositionData.Position;
-		                                //__instance.GetComponent<Player>()._statusEntity.Cmd_TakeDamage(99999, Single.MaxValue, DamageWeight.Heavy, Vector3.up, Vector3.down);			Player playerc = __instance.GetComponent<Player>();
 	                                }
                                 }
                                 else
                                 {
 	                                Main.LogInfraction(__instance, cheatType, details);
 	                                player.transform.position = lastPositionData.Position;
-	                                //__instance.GetComponent<Player>()._statusEntity.Cmd_TakeDamage(99999, Single.MaxValue, DamageWeight.Heavy, Vector3.up, Vector3.down);			Player playerc = __instance.GetComponent<Player>();
                                 }
                                 
                                 Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = lastPositionData.Position, Timestamp = Time.time };
@@ -585,7 +583,6 @@ namespace HardAntiCheat
 			                    Main.LogInfraction(__instance, "Stat Manipulation (Overboarded Jumps)", $"Client reported _maxJumps of {__instance._maxJumps}. Reverting to {Main.JumpThreshold.Value}.");
 			                    __instance._maxJumps = 2;
 			                    Main.ServerJumpCheckCooldowns[netId] = Time.time + Main.JumpHackDetectionCooldown.Value;
-			                    //__instance.GetComponent<Player>()._statusEntity.Cmd_TakeDamage(99999, Single.MaxValue, DamageWeight.Heavy, Vector3.up, Vector3.down);			Player playerc = __instance.GetComponent<Player>();
 		                    }
 	                    }
 	                    else
@@ -593,7 +590,6 @@ namespace HardAntiCheat
 		                    Main.LogInfraction(__instance, "Stat Manipulation (Overboarded Jumps)", $"Client reported _maxJumps of {__instance._maxJumps}. Reverting to {Main.JumpThreshold.Value}.");
 		                    __instance._maxJumps = 2;
 		                    Main.ServerJumpCheckCooldowns[netId] = Time.time + Main.JumpHackDetectionCooldown.Value;
-		                    //__instance.GetComponent<Player>()._statusEntity.Cmd_TakeDamage(99999, Single.MaxValue, DamageWeight.Heavy, Vector3.up, Vector3.down);			Player playerc = __instance.GetComponent<Player>();
 	                    }
                     }
                 }
@@ -641,14 +637,12 @@ namespace HardAntiCheat
 								{
 									Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
                                     Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
-                                    //__instance.GetComponent<Player>()._statusEntity.Cmd_TakeDamage(99999, Single.MaxValue, DamageWeight.Heavy, Vector3.up, Vector3.down);			Player playerc = __instance.GetComponent<Player>();
 								}
 	                        }
 	                        else
 	                        {
 		                        Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
 		                        Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
-		                        //__instance.GetComponent<Player>()._statusEntity.Cmd_TakeDamage(99999, Single.MaxValue, DamageWeight.Heavy, Vector3.up, Vector3.down);			Player playerc = __instance.GetComponent<Player>();
 	                        }
                         }
                     }
