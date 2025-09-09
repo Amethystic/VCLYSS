@@ -14,9 +14,15 @@ using UnityEngine.UI;
 namespace HardAntiCheat
 {
     #region Data Structures
+    public class PlayerSpawnState
+    {
+        public float AuthorityTimestamp = 0f;
+        public bool SentSparkle = false;
+        public bool SentPoof = false;
+        public bool SentTeleport = false;
+    }
     public struct PlayerPositionData { public Vector3 Position; public float Timestamp; }
 	public struct PlayerStatsData { public int Level; public int Experience; }
-    // MODIFIED: Added fields for vertical stall detection
 	public struct PlayerAirborneData { public float AirTime; public Vector3 LastGroundedPosition; public int ServerSideJumpCount; public float LastVerticalPosition; public float VerticalStallTime; }
     #endregion
 
@@ -56,6 +62,9 @@ namespace HardAntiCheat
         public static ConfigEntry<bool> LogInfractionCount;
         public static ConfigEntry<bool> LogInfractionDetails;
 
+		// --- SERVER-SIDE MOD DETECTION DICTIONARIES ---
+        public static readonly Dictionary<uint, PlayerSpawnState> ServerSpawnStateTracker = new Dictionary<uint, PlayerSpawnState>();
+        
 		// --- SERVER-SIDE DATA DICTIONARIES ---
 		public static readonly Dictionary<uint, Dictionary<string, float>> ServerRemainingCooldowns = new Dictionary<uint, Dictionary<string, float>>();
         public static readonly Dictionary<uint, PlayerPositionData> ServerPlayerPositions = new Dictionary<uint, PlayerPositionData>();
@@ -69,6 +78,26 @@ namespace HardAntiCheat
         public static readonly Dictionary<uint, float> ServerJumpCheckCooldowns = new Dictionary<uint, float>();
         public static readonly Dictionary<uint, float> ServerAirborneCheckCooldowns = new Dictionary<uint, float>();
         public static readonly Dictionary<uint, float> AuthorizedSelfRevives = new Dictionary<uint, float>();
+		
+        private const float WATCHLIST_TIMEOUT = 20f; // Players are only watched for 20 seconds after spawning.
+
+        private void Update()
+        {
+            if (!NetworkServer.active) return;
+
+            List<uint> playersToRemove = new List<uint>();
+            foreach (var entry in ServerSpawnStateTracker)
+            {
+                if (entry.Value.AuthorityTimestamp > 0 && Time.time - entry.Value.AuthorityTimestamp > WATCHLIST_TIMEOUT)
+                {
+                    playersToRemove.Add(entry.Key);
+                }
+            }
+            foreach (uint netId in playersToRemove)
+            {
+                ServerSpawnStateTracker.Remove(netId);
+            }
+        }
 		
 		private void Awake()
 		{
@@ -239,6 +268,7 @@ namespace HardAntiCheat
             ServerSpeedCheckCooldowns.Remove(netId);
             ServerJumpCheckCooldowns.Remove(netId);
             ServerAirborneCheckCooldowns.Remove(netId);
+            ServerSpawnStateTracker.Remove(netId);
         }
 	}
     
@@ -276,45 +306,31 @@ namespace HardAntiCheat
     {
         private static DeathPromptManager _deathPromptManagerInstance;
 
-        // We patch the fundamental "Press" method in the UnityEngine.UI.Button class itself.
         [HarmonyPatch(typeof(UnityEngine.UI.Button), "Press")]
         [HarmonyPrefix]
         public static bool OnButtonPress(UnityEngine.UI.Button __instance)
         {
-            // --- This code runs on the CLIENT for EVERY button click ---
-
-            // First, find the DeathPromptManager instance if we haven't already.
             if (_deathPromptManagerInstance == null)
             {
                 _deathPromptManagerInstance = UnityEngine.Object.FindObjectOfType<DeathPromptManager>();
-                if (_deathPromptManagerInstance == null) return true; // Can't do anything if it doesn't exist.
+                if (_deathPromptManagerInstance == null) return true;
             }
 
-            // Get the specific "_useTearButton" instance from the manager.
             Button tearButton = Traverse.Create(_deathPromptManagerInstance).Field<Button>("_useTearButton").Value;
 
-            // Is the button that was just pressed (__instance) the tear button we care about?
             if (tearButton != null && __instance == tearButton)
             {
-                // IT IS. We have 100% confirmed the correct button was physically clicked.
-                // Now, we perform the secure handshake.
-
                 Player mainPlayer = Player._mainPlayer;
                 if (mainPlayer != null)
                 {
                     PlayerInventory inventory = mainPlayer.GetComponent<PlayerInventory>();
                     if (inventory != null)
                     {
-                        // Find the tear in the inventory to pass to the EXISTING Cmd_UseConsumable command.
                         foreach (ItemData item in inventory._heldItems)
                         {
                             if (item != null && item._itemName == "Angela's Tear")
                             {
-                                // Send the command. This will be intercepted by our server-side patch.
                                 inventory.Cmd_UseConsumable(item);
-
-                                // IMPORTANT: Return TRUE to allow the original Press() method to finish.
-                                // This ensures the button provides visual feedback (like flashing).
                                 return true;
                             }
                         }
@@ -322,7 +338,6 @@ namespace HardAntiCheat
                 }
             }
 
-            // If it wasn't the tear button, just let it function normally.
             return true;
         }
     }
@@ -332,7 +347,6 @@ namespace HardAntiCheat
 	[HarmonyPatch]
 	public static class ItemUsageValidationPatch
 	{
-		// This patch targets the SERVER'S code for when it RECEIVES a Cmd_UseConsumable request.
 		[HarmonyPatch(typeof(PlayerInventory), "UserCode_Cmd_UseConsumable__ItemData")]
 		[HarmonyPrefix]
 		public static void GrantTokenOnTearUsage(PlayerInventory __instance, ItemData _itemData)
@@ -382,27 +396,159 @@ namespace HardAntiCheat
 					if (Time.time - timestamp < 1.5f)
 					{
 						Main.AuthorizedSelfRevives.Remove(netId);
-						return true; // <<<--- ALLOW (Legitimate, button-authorized action)
+						return true;
 					}
 				}
 				
-				// A token was not found or was expired. This is an illegitimate call.
 				Main.LogInfraction(__instance, "Unauthorized Action (Replenish while Dead)", "Blocked replenish call - was not authorized by UI button press.");
-				return false; // <<<--- DENY
+				return false;
 			}
 			
 			return true;
 		}
 	}
     #endregion
+	
+	#region Blatent Honeypots
+	
+	#region Teleportation
+    [HarmonyPatch(typeof(NetworkTransformBase), nameof(NetworkTransformBase.CmdTeleport), new Type[] { typeof(Vector3), typeof(Quaternion) })]
+    public static class CmdTeleportValidationPatch2
+    {
+    	public static bool Prefix(NetworkBehaviour __instance)
+    	{
+    		if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
+    		Player player = __instance.GetComponent<Player>();
+    		if (Main.DisableForHost.Value) { if (player._isHostPlayer) {  return true; } }
+    		Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
+    		
+    		return false;
+    	}
+    }
+    [HarmonyPatch(typeof(NetworkTransformBase), nameof(NetworkTransformBase.CmdTeleport), new Type[] { typeof(Vector3) })]
+    public static class CmdTeleportValidationPatch
+    {
+    	public static bool Prefix(NetworkBehaviour __instance)
+    	{
+    		if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
+    		Player player = __instance.GetComponent<Player>();
+    		if (Main.DisableForHost.Value) { if (player._isHostPlayer) { return true; } }
+    		Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
+    		
+    		return false;
+    	}
+    }
+    #endregion
+    
+    #region Third-Party Mod Server-Side Spawn Detection
+    [HarmonyPatch]
+    public static class FluffUtilitiesSpawnDetectionPatch
+    {
+        private const float SPAWN_WATCH_DURATION = 20.0f; // Server will "watch" a new player for this duration.
 
-    	[HarmonyPatch(typeof(PlayerMove), "Update")]
+        private static void CheckForSignature(uint netId, Player playerInstance)
+        {
+            if (Main.ServerSpawnStateTracker.TryGetValue(netId, out PlayerSpawnState watchData))
+            {
+                if (watchData.SentSparkle && watchData.SentPoof && watchData.SentTeleport)
+                {
+                    Main.LogInfraction(playerInstance, "Mod Usage Detected (FluffUtilities)", "Detected mod's signature VFX sequence on spawn.");
+                    Main.ServerSpawnStateTracker.Remove(netId);
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(NetworkIdentity), "OnStartAuthority")]
+        [HarmonyPostfix]
+        public static void OnPlayerGainsAuthority(NetworkIdentity __instance)
+        {
+            if (!NetworkServer.active || __instance.GetComponent<Player>() == null) return;
+            uint netId = __instance.netId;
+            Main.ServerSpawnStateTracker[netId] = new PlayerSpawnState { AuthorityTimestamp = Time.time };
+        }
+
+        [HarmonyPatch(typeof(PlayerVisual), "Cmd_VanitySparkleEffect")]
+        [HarmonyPrefix]
+        public static bool OnSparkle(PlayerVisual __instance)
+        {
+            if (!NetworkServer.active) return true;
+            uint netId = __instance.netId;
+
+            if (Main.ServerSpawnStateTracker.TryGetValue(netId, out PlayerSpawnState watchData))
+            {
+                watchData.SentSparkle = true;
+                CheckForSignature(netId, __instance.GetComponent<Player>());
+            }
+            return true;
+        }
+
+        [HarmonyPatch(typeof(PlayerVisual), "Cmd_PoofSmokeEffect")]
+        [HarmonyPrefix]
+        public static bool OnPoof(PlayerVisual __instance)
+        {
+            if (!NetworkServer.active) return false;
+            uint netId = __instance.netId;
+
+            if (Main.ServerSpawnStateTracker.TryGetValue(netId, out PlayerSpawnState watchData))
+            {
+                watchData.SentPoof = true;
+                CheckForSignature(netId, __instance.GetComponent<Player>());
+            }
+            return true;
+        }
+
+        [HarmonyPatch(typeof(PlayerVisual), "Cmd_PlayTeleportEffect")]
+        [HarmonyPrefix]
+        public static bool OnTeleport(PlayerVisual __instance)
+        {
+            if (!NetworkServer.active) return false;
+            uint netId = __instance.netId;
+            
+            if (Main.ServerSpawnStateTracker.TryGetValue(netId, out PlayerSpawnState watchData))
+            {
+                watchData.SentTeleport = true;
+                CheckForSignature(netId, __instance.GetComponent<Player>());
+            }
+            return true;
+        }
+    }
+    #endregion
+	
+	#endregion
+
+	#region Movement/Airborne Protection
+	[HarmonyPatch(typeof(PlayerMove), "Init_Jump")]
+	public static class JumpValidationPatch
+	{
+		public static bool Prefix(PlayerMove __instance)
+		{
+			Player player = __instance.GetComponent<Player>();
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableAirborneChecks.Value) return true;
+			if (Main.DisableForHost.Value)
+			{
+				if (player._isHostPlayer)
+				{
+					return true;
+				}
+			}
+            
+			uint netId = __instance.netId;
+			if (!Main.ServerPlayerAirborneStates.ContainsKey(netId))
+				Main.ServerPlayerAirborneStates[netId] = new PlayerAirborneData { AirTime = 0f, LastGroundedPosition = __instance.transform.position, ServerSideJumpCount = 0, LastVerticalPosition = __instance.transform.position.y, VerticalStallTime = 0f };
+			PlayerAirborneData airData = Main.ServerPlayerAirborneStates[netId];
+			if(airData.ServerSideJumpCount >= Main.JumpThreshold.Value) { return false; }
+			airData.ServerSideJumpCount++;
+			Main.ServerPlayerAirborneStates[netId] = airData;
+			return true;
+		}
+	}
+	
+	[HarmonyPatch(typeof(PlayerMove), "Update")]
     public static class MovementAndAirborneValidationPatch
     {
         private const float MAX_ALLOWED_AIR_TIME = 10.0f;
         private const float VERTICAL_STALL_TOLERANCE = 0.05f;
         private const float VERTICAL_STALL_GRACE_PERIOD = 0.5f;
-        // NEW: Define the maximum allowed vertical height for players.
         private const float MAX_FLIGHT_HEIGHT = 4240f;
 
         public static void Postfix(PlayerMove __instance)
@@ -421,7 +567,6 @@ namespace HardAntiCheat
                 {
                     if (Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float initialSpeed))
                     {
-						// Homebrewery can of whoopass bugfix
                         if (__instance._movSpeed > Main.MaxEffectiveSpeed.Value)
                         {
 	                        if (Main.DisableForHost.Value)
@@ -538,7 +683,6 @@ namespace HardAntiCheat
                 {
                     airData.AirTime += Time.deltaTime;
 
-                    // Vertical Stall Detection Logic
                     if (Mathf.Abs(currentPosition.y - airData.LastVerticalPosition) < VERTICAL_STALL_TOLERANCE)
                     {
                         airData.VerticalStallTime += Time.deltaTime;
@@ -553,28 +697,36 @@ namespace HardAntiCheat
                 
                 if (currentPosition.y > MAX_FLIGHT_HEIGHT)
                 {
-                    if (airData.AirTime > MAX_ALLOWED_AIR_TIME)
+                    bool isExemptHost = Main.DisableForHost.Value && player._isHostPlayer;
+                    if (!isExemptHost)
                     {
-	                    if (airData.VerticalStallTime < VERTICAL_STALL_GRACE_PERIOD)
-	                    {
-		                    if (!Main.ServerAirborneCheckCooldowns.ContainsKey(netId) || Time.time > Main.ServerAirborneCheckCooldowns[netId])
-		                    {
-			                    if (Main.DisableForHost.Value)
-			                    {
-				                    if (!player._isHostPlayer) 
-				                    {
-					                    Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
-					                    Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
-				                    }
-			                    }
-			                    else
-			                    {
-				                    Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
-				                    Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
-			                    }
-		                    }
-	                    }
+                        Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Exceeded maximum height limit of {MAX_FLIGHT_HEIGHT}. Reverting to last ground position.");
+                        __instance.transform.position = airData.LastGroundedPosition;
+                        return;
                     }
+                }
+                
+                if (airData.AirTime > MAX_ALLOWED_AIR_TIME)
+                {
+	                if (airData.VerticalStallTime < VERTICAL_STALL_GRACE_PERIOD)
+	                {
+		                if (!Main.ServerAirborneCheckCooldowns.ContainsKey(netId) || Time.time > Main.ServerAirborneCheckCooldowns[netId])
+		                {
+			                if (Main.DisableForHost.Value)
+			                {
+				                if (!player._isHostPlayer) 
+				                {
+					                Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
+					                Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
+				                }
+			                }
+			                else
+			                {
+				                Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1} seconds. Reverting to last ground position.");
+				                Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
+			                }
+		                }
+	                }
                     
                     __instance.transform.position = airData.LastGroundedPosition;
                     airData.AirTime = 0f;
@@ -585,6 +737,7 @@ namespace HardAntiCheat
             }
         }
     }
+	#endregion
     
     #region Experience and Level Manipulation Protection
 	[HarmonyPatch]

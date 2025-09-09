@@ -13,6 +13,7 @@
 - Airborne Height limiting check (Allows you to fly within the height limit)
 - Fixed isHost bug
 - Fixed Revive detection logic
+- Added TanukiUtil Mod Detection (W.I.P)
 
 - In-Game Logical Actions fixes
 Example:
