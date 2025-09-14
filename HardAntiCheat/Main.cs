@@ -14,12 +14,9 @@ using UnityEngine.UI;
 namespace HardAntiCheat
 {
     #region Data Structures
-    public class PlayerSpawnState
+    public class FluffDetectionState
     {
-        public float AuthorityTimestamp = 0f;
-        public bool SentSparkle = false;
-        public bool SentPoof = false;
-        public bool SentTeleport = false;
+        public float SparkleTimestamp = 0f;
     }
     public struct PlayerPositionData { public Vector3 Position; public float Timestamp; }
 	public struct PlayerStatsData { public int Level; public int Experience; }
@@ -51,6 +48,7 @@ namespace HardAntiCheat
 		public static ConfigEntry<bool> EnableExperienceChecks;
 		public static ConfigEntry<int> JumpThreshold;
         public static ConfigEntry<int> MaxPlausibleXPGain;
+        public static ConfigEntry<int> MaxPlausibleCurrencyGain; // <-- NEW CONFIG
 		public static ConfigEntry<bool> EnableCooldownChecks;
 		public static ConfigEntry<bool> EnableReviveChecks;
 		public static ConfigEntry<bool> EnablePunishmentSystem;
@@ -63,7 +61,7 @@ namespace HardAntiCheat
         public static ConfigEntry<bool> LogInfractionDetails;
 
 		// --- SERVER-SIDE MOD DETECTION DICTIONARIES ---
-        public static readonly Dictionary<uint, PlayerSpawnState> ServerSpawnStateTracker = new Dictionary<uint, PlayerSpawnState>();
+        public static readonly Dictionary<uint, FluffDetectionState> FluffWatchlist = new Dictionary<uint, FluffDetectionState>();
         
 		// --- SERVER-SIDE DATA DICTIONARIES ---
 		public static readonly Dictionary<uint, Dictionary<string, float>> ServerRemainingCooldowns = new Dictionary<uint, Dictionary<string, float>>();
@@ -79,23 +77,23 @@ namespace HardAntiCheat
         public static readonly Dictionary<uint, float> ServerAirborneCheckCooldowns = new Dictionary<uint, float>();
         public static readonly Dictionary<uint, float> AuthorizedSelfRevives = new Dictionary<uint, float>();
 		
-        private const float WATCHLIST_TIMEOUT = 20f; // Players are only watched for 20 seconds after spawning.
+        private const float MOD_SEQUENCE_TIMEOUT = 2f;
 
         private void Update()
         {
             if (!NetworkServer.active) return;
 
             List<uint> playersToRemove = new List<uint>();
-            foreach (var entry in ServerSpawnStateTracker)
+            foreach (var entry in FluffWatchlist)
             {
-                if (entry.Value.AuthorityTimestamp > 0 && Time.time - entry.Value.AuthorityTimestamp > WATCHLIST_TIMEOUT)
+                if (Time.time - entry.Value.SparkleTimestamp > MOD_SEQUENCE_TIMEOUT)
                 {
                     playersToRemove.Add(entry.Key);
                 }
             }
-            foreach (uint netId in playersToRemove)
+            foreach (var netId in playersToRemove)
             {
-                ServerSpawnStateTracker.Remove(netId);
+                FluffWatchlist.Remove(netId);
             }
         }
 		
@@ -125,6 +123,7 @@ namespace HardAntiCheat
 
 			EnableExperienceChecks = Config.Bind("3. Stat Detections", "Enable Experience/Level Checks", true, "Prevents players from gaining huge amounts of XP or multiple levels at once based on the 'Max Plausible XP Gain' limit.");
             MaxPlausibleXPGain = Config.Bind("3. Stat Detections", "Max Plausible XP Gain", 77000, "The maximum amount of XP a player can gain in a single transaction. Adjust this based on your server's max XP rewards.");
+            MaxPlausibleCurrencyGain = Config.Bind("3. Stat Detections", "Max Plausible Currency Gain", 50000, "The maximum amount of Currency a player can add via a direct command. Catches /currency cheats.");
 
 			EnableCooldownChecks = Config.Bind("4. Combat Detections", "Enable Skill Cooldown Checks", true, "Silently enforces server-side cooldowns, blocking premature skill usage.");
 			EnableReviveChecks = Config.Bind("4. Combat Detections", "Enable Self-Revive Checks", true, "Prevents players from reviving themselves while dead.");
@@ -187,42 +186,49 @@ namespace HardAntiCheat
 
 			if (EnablePunishmentSystem.Value && !AtlyssNetworkManager._current._soloMode && currentInfractions >= maxInfractions)
 			{
-				if (NetworkServer.active && player != null && HostConsole._current != null && player.connectionToClient != null)
+				if (NetworkServer.active && player != null && player.connectionToClient != null)
 				{
-                    HC_PeerListEntry targetPeer = null;
-                    foreach(var entry in HostConsole._current._peerListEntries)
+                    ServerPunishmentCooldown[netId] = Time.time + 60f;
+                    string action = ActionType.Value.ToLower();
+                    string punishmentDetails = $"Player {playerName} (ID: {playerID}) was automatically {action.ToUpper()}ed for reaching {currentInfractions}/{maxInfractions} infractions.";
+                    
+                    Log.LogWarning(punishmentDetails);
+                    try { File.AppendAllText(InfractionLogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [PUNISHMENT] " + punishmentDetails + Environment.NewLine); }
+                    catch (Exception ex) { Log.LogError($"Failed to write punishment to log: {ex.Message}"); }
+                    
+                    if (HostConsole._current != null)
                     {
-                        if (entry._netId != null && entry._netId.netId == netId) { targetPeer = entry; break; }
+                        HostConsole._current.Init_ServerMessage("[HAC]: " + punishmentDetails);
                     }
 
-                    if (targetPeer != null)
+                    if (action == "kick")
                     {
-                        ServerPunishmentCooldown[netId] = Time.time + 60f;
-                        string action = ActionType.Value.ToLower();
-					    string punishmentDetails = $"Player {playerName} (ID: {playerID}) was automatically {action.ToUpper()}ed for reaching {currentInfractions}/{maxInfractions} infractions.";
-					    
-                        Log.LogWarning(punishmentDetails);
-					    try { File.AppendAllText(InfractionLogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [PUNISHMENT] " + punishmentDetails + Environment.NewLine); }
-					    catch (Exception ex) { Log.LogError($"Failed to write punishment to log: {ex.Message}"); }
-                        
-                        HostConsole._current._selectedPeerEntry = targetPeer;
-                        if(action == "kick") 
+                        player.connectionToClient.Disconnect();
+                    } 
+                    else // Ban
+                    {
+                        HC_PeerListEntry targetPeer = null;
+                        if (HostConsole._current != null)
                         {
-                            HostConsole._current.Init_ServerMessage("[HAC]: " + punishmentDetails); 
-                            HostConsole._current.Kick_Peer(); 
-                        } 
-                        else 
-                        {
-                            HostConsole._current.Init_ServerMessage("[HAC]: " + punishmentDetails); 
-                            HostConsole._current.Ban_Peer(); 
+                            foreach(var entry in HostConsole._current._peerListEntries)
+                            {
+                                if (entry._netId != null && entry._netId.netId == netId) { targetPeer = entry; break; }
+                            }
                         }
                         
-                        ServerPlayerInfractionCount.Remove(netId);
+                        if (targetPeer != null)
+                        {
+                            HostConsole._current._selectedPeerEntry = targetPeer;
+                            HostConsole._current.Ban_Peer();
+                        }
+                        else
+                        {
+                            player.connectionToClient.Disconnect();
+                            Log.LogError($"Could not find PeerListEntry for player {playerName} (netId: {netId}) to BAN, kicked instead.");
+                        }
                     }
-                    else
-                    {
-                        Log.LogError($"Could not find PeerListEntry for player {playerName} (netId: {netId}) to take action.");
-                    }
+                    
+                    ServerPlayerInfractionCount.Remove(netId);
 				}
                 return;
 			}
@@ -268,7 +274,7 @@ namespace HardAntiCheat
             ServerSpeedCheckCooldowns.Remove(netId);
             ServerJumpCheckCooldowns.Remove(netId);
             ServerAirborneCheckCooldowns.Remove(netId);
-            ServerSpawnStateTracker.Remove(netId);
+            FluffWatchlist.Remove(netId);
         }
 	}
     
@@ -440,74 +446,66 @@ namespace HardAntiCheat
     }
     #endregion
     
-    #region Third-Party Mod Server-Side Spawn Detection
+    #region Third-Party Mod Detection
     [HarmonyPatch]
-    public static class FluffUtilitiesSpawnDetectionPatch
+    public static class FluffUtilitiesDetectionPatch
     {
-        private const float SPAWN_WATCH_DURATION = 20.0f; // Server will "watch" a new player for this duration.
+        private const float MOD_SEQUENCE_TIMEOUT = 2f;
 
-        private static void CheckForSignature(uint netId, Player playerInstance)
-        {
-            if (Main.ServerSpawnStateTracker.TryGetValue(netId, out PlayerSpawnState watchData))
-            {
-                if (watchData.SentSparkle && watchData.SentPoof && watchData.SentTeleport)
-                {
-                    Main.LogInfraction(playerInstance, "Mod Usage Detected (FluffUtilities)", "Detected mod's signature VFX sequence on spawn.");
-                    Main.ServerSpawnStateTracker.Remove(netId);
-                }
-            }
-        }
-
-        [HarmonyPatch(typeof(NetworkIdentity), "OnStartAuthority")]
-        [HarmonyPostfix]
-        public static void OnPlayerGainsAuthority(NetworkIdentity __instance)
-        {
-            if (!NetworkServer.active || __instance.GetComponent<Player>() == null) return;
-            uint netId = __instance.netId;
-            Main.ServerSpawnStateTracker[netId] = new PlayerSpawnState { AuthorityTimestamp = Time.time };
-        }
-
-        [HarmonyPatch(typeof(PlayerVisual), "Cmd_VanitySparkleEffect")]
-        [HarmonyPrefix]
+        [HarmonyPatch(typeof(PlayerVisual), "UserCode_Cmd_VanitySparkleEffect")]
+        [HarmonyPrefix, HarmonyPriority(Priority.First)]
         public static bool OnSparkle(PlayerVisual __instance)
         {
-            if (!NetworkServer.active) return true;
+            if (!NetworkServer.active || !Main.EnableAntiCheat.Value) return true;
+            
+            Player player = __instance.GetComponent<Player>();
+            if (Main.DisableForHost.Value && player._isHostPlayer) return true;
+            
             uint netId = __instance.netId;
 
-            if (Main.ServerSpawnStateTracker.TryGetValue(netId, out PlayerSpawnState watchData))
-            {
-                watchData.SentSparkle = true;
-                CheckForSignature(netId, __instance.GetComponent<Player>());
-            }
+            Main.FluffWatchlist[netId] = new FluffDetectionState { SparkleTimestamp = Time.time };
             return true;
         }
 
-        [HarmonyPatch(typeof(PlayerVisual), "Cmd_PoofSmokeEffect")]
-        [HarmonyPrefix]
+        [HarmonyPatch(typeof(PlayerVisual), "UserCode_Cmd_PoofSmokeEffect")]
+        [HarmonyPrefix, HarmonyPriority(Priority.First)]
         public static bool OnPoof(PlayerVisual __instance)
         {
-            if (!NetworkServer.active) return false;
+            if (!NetworkServer.active || !Main.EnableAntiCheat.Value) return true;
+            
+            Player player = __instance.GetComponent<Player>();
+            if (Main.DisableForHost.Value && player._isHostPlayer) return true;
+            
             uint netId = __instance.netId;
-
-            if (Main.ServerSpawnStateTracker.TryGetValue(netId, out PlayerSpawnState watchData))
+            
+            if (Main.FluffWatchlist.TryGetValue(netId, out FluffDetectionState state))
             {
-                watchData.SentPoof = true;
-                CheckForSignature(netId, __instance.GetComponent<Player>());
+                if (Time.time - state.SparkleTimestamp < MOD_SEQUENCE_TIMEOUT)
+                {
+                    Main.LogInfraction(player, "Mod Usage Detected (FluffUtilities)", "Detected mod's signature VFX sequence (2-Step Verification).");
+                }
+                Main.FluffWatchlist.Remove(netId);
             }
             return true;
         }
+    }
 
-        [HarmonyPatch(typeof(PlayerVisual), "Cmd_PlayTeleportEffect")]
-        [HarmonyPrefix]
-        public static bool OnTeleport(PlayerVisual __instance)
+    [HarmonyPatch]
+    public static class FluffCommandDetectionPatch
+    {
+        [HarmonyPatch(typeof(PlayerInventory), "UserCode_Cmd_AddCurrency__Int32")]
+        [HarmonyPrefix, HarmonyPriority(Priority.First)]
+        public static bool OnAddCurrency(PlayerInventory __instance, int _value)
         {
-            if (!NetworkServer.active) return false;
-            uint netId = __instance.netId;
+            if (!NetworkServer.active || !Main.EnableAntiCheat.Value) return true;
             
-            if (Main.ServerSpawnStateTracker.TryGetValue(netId, out PlayerSpawnState watchData))
+            Player player = __instance.GetComponent<Player>();
+            if (Main.DisableForHost.Value && player._isHostPlayer) return true;
+
+            if (_value > Main.MaxPlausibleCurrencyGain.Value)
             {
-                watchData.SentTeleport = true;
-                CheckForSignature(netId, __instance.GetComponent<Player>());
+                Main.LogInfraction(player, "Modded Money (Addition)", $"Player attempted to add an impossible amount of currency: {_value}. Blocked.");
+                return false; 
             }
             return true;
         }

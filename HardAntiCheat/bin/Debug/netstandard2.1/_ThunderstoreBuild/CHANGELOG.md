@@ -13,7 +13,8 @@
 - Airborne Height limiting check (Allows you to fly within the height limit)
 - Fixed isHost bug
 - Fixed Revive detection logic
-- Added TanukiUtil Mod Detection (W.I.P)
+- Added TanukiUtil Mod Detection (Finalized)
+- Added Currency Add Check back (Yes i removed it in past versions)
 
 - In-Game Logical Actions fixes
 Example:
@@ -65,5 +66,6 @@ Example:
 - Tinker Tappers
 - shh CHANGELOG.md incident (x2)
 - scraped damage idea
+- Improved Auto Kicking/Banning
 
 </details>

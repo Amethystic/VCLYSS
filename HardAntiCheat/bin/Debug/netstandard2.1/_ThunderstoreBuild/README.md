@@ -60,6 +60,7 @@ This module validates changes to player stats like experience and levels.
 | :--- | :---: | :--- |
 | `Enable Experience/Level Checks` | ✅ | Prevents players from gaining huge amounts of XP or multiple levels at once. |
 | `Max Plausible XP Gain` | 77000 | The maximum XP a player can gain in a single transaction. Adjust based on your server's max XP rewards. |
+| `Max Plausible Currency Gain` | 50000 | The maximum amount of Currency a player can add via a direct command. Catches /currency cheats. |
 
 ### Combat Detections
 
