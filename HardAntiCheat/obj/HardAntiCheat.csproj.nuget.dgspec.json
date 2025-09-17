@@ -5,7 +5,7 @@
   },
   "projects": {
     "F:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\HardAntiCheat.csproj": {
-      "version": "2.1.2",
+      "version": "2.1.4",
       "restore": {
         "projectUniqueName": "F:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\HardAntiCheat.csproj",
         "projectName": "HardAntiCheat",
@@ -60,6 +60,10 @@
             "BepInEx.Core": {
               "target": "Package",
               "version": "[5.4.*, )"
+            },
+            "Robyn-CodeTalker": {
+              "target": "Package",
+              "version": "[1.2.0, )"
             },
             "UnityEngine.Modules": {
               "suppressParent": "All",

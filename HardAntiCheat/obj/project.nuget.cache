@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "dgSpecHash": "d+8BAeB9nB0=",
+  "dgSpecHash": "WFw2h0xwv+o=",
   "success": true,
   "projectFilePath": "F:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\HardAntiCheat.csproj",
   "expectedPackageFiles": [
@@ -14,6 +14,7 @@
     "C:\\Users\\Richard\\.nuget\\packages\\mono.cecil\\0.11.4\\mono.cecil.0.11.4.nupkg.sha512",
     "C:\\Users\\Richard\\.nuget\\packages\\monomod.runtimedetour\\21.12.13.1\\monomod.runtimedetour.21.12.13.1.nupkg.sha512",
     "C:\\Users\\Richard\\.nuget\\packages\\monomod.utils\\21.12.13.1\\monomod.utils.21.12.13.1.nupkg.sha512",
+    "C:\\Users\\Richard\\.nuget\\packages\\robyn-codetalker\\1.2.0\\robyn-codetalker.1.2.0.nupkg.sha512",
     "C:\\Users\\Richard\\.nuget\\packages\\system.collections\\4.3.0\\system.collections.4.3.0.nupkg.sha512",
     "C:\\Users\\Richard\\.nuget\\packages\\system.collections.nongeneric\\4.3.0\\system.collections.nongeneric.4.3.0.nupkg.sha512",
     "C:\\Users\\Richard\\.nuget\\packages\\system.collections.specialized\\4.3.0\\system.collections.specialized.4.3.0.nupkg.sha512",

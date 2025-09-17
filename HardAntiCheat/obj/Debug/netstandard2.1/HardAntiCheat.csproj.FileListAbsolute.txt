@@ -91,3 +91,4 @@ F:\Documents\CODE\Ours\HardAntiCheat\HardAntiCheat\obj\Debug\netstandard2.1\Hard
 F:\Documents\CODE\Ours\HardAntiCheat\HardAntiCheat\obj\Debug\netstandard2.1\HardAntiCheat.sourcelink.json
 F:\Documents\CODE\Ours\HardAntiCheat\HardAntiCheat\obj\Debug\netstandard2.1\HardAnti.65CF51DB.Up2Date
 F:\Documents\CODE\Ours\HardAntiCheat\HardAntiCheat\obj\Debug\netstandard2.1\HardAntiCheat.dll
+F:\Documents\CODE\Ours\HardAntiCheat\HardAntiCheat\bin\Debug\netstandard2.1\CodeTalker.dll
