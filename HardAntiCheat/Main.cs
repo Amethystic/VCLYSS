@@ -642,7 +642,7 @@ namespace HardAntiCheat
 
                 if (distanceTraveled > maxPossibleDistance)
                 {
-					if (Main.DisableForHost.Value && player._isHostPlayer) return true;
+					if (Main.DisableForHost.Value) { if (player._isHostPlayer) return true; }
 								
                     string cheatType = distanceTraveled > Main.TeleportDistanceThreshold.Value ? "Movement Hack (Teleport)" : "Movement Hack (Speed)";
                     string details = $"Moved {distanceTraveled:F1} units in {timeElapsed:F2}s. Packet blocked.";
