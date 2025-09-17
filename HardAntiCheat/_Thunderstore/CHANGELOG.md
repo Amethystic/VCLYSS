@@ -15,6 +15,7 @@
 - Fixed Revive detection logic
 - Added Currency Add Check back (Yes i removed it in past versions)
 - Added Codetalker Anticheat Syncing (Optional)
+- Improved Teleportation Check
 
 - In-Game Logical Actions fixes
 Example:
