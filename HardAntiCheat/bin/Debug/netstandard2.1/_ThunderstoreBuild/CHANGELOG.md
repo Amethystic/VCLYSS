@@ -69,5 +69,6 @@ Example:
 - scraped damage idea
 - Improved Auto Kicking/Banning
 - Scrapped TanukiUtil Mod Detection (Had better ideas)
+- quick patch so silent update from 2.1.4
 
 </details>
