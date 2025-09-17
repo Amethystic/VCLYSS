@@ -543,43 +543,6 @@ namespace HardAntiCheat
     	}
     }
     #endregion
-    
-    #region Third-Party Mod Detection
-    [HarmonyPatch]
-    // public static class FluffUtilitiesDetectionPatch
-    // {
-    //     private const float MOD_SEQUENCE_TIMEOUT = 2f;
-    //
-    //     [HarmonyPatch(typeof(PlayerVisual), "UserCode_Cmd_VanitySparkleEffect")]
-    //     [HarmonyPrefix, HarmonyPriority(Priority.First)]
-    //     public static bool OnSparkle(PlayerVisual __instance)
-    //     {
-    //         if (!NetworkServer.active || !Main.EnableAntiCheat.Value) return true;
-    //         Player player = __instance.GetComponent<Player>();
-    //         if (Main.DisableForHost.Value && player._isHostPlayer) return true;
-    //         Main.FluffWatchlist[__instance.netId] = new FluffDetectionState { SparkleTimestamp = Time.time };
-    //         return true;
-    //     }
-    //
-    //     [HarmonyPatch(typeof(PlayerVisual), "UserCode_Cmd_PoofSmokeEffect")]
-    //     [HarmonyPrefix, HarmonyPriority(Priority.First)]
-    //     public static bool OnPoof(PlayerVisual __instance)
-    //     {
-    //         if (!NetworkServer.active || !Main.EnableAntiCheat.Value) return true;
-    //         Player player = __instance.GetComponent<Player>();
-    //         if (Main.DisableForHost.Value && player._isHostPlayer) return true;
-    //         uint netId = __instance.netId;
-    //         if (Main.FluffWatchlist.TryGetValue(netId, out FluffDetectionState state))
-    //         {
-    //             if (Time.time - state.SparkleTimestamp < MOD_SEQUENCE_TIMEOUT)
-    //             {
-    //                 Main.LogDetection(player, "Mod Presence Detected (FluffUtilities)", "Detected mod's signature VFX sequence.");
-    //             }
-    //             Main.FluffWatchlist.Remove(netId);
-    //         }
-    //         return true;
-    //     }
-    // }
 
     [HarmonyPatch]
     public static class CurrencyDetectionPatch
@@ -593,30 +556,13 @@ namespace HardAntiCheat
             if (Main.DisableForHost.Value && player._isHostPlayer) return true;
             if (_value > Main.MaxPlausibleCurrencyGain.Value)
             {
-                Main.LogInfraction(player, "Mod Command Abuse (FluffUtilities)", $"Attempted to add impossible currency amount: {_value}. Blocked.");
+                Main.LogInfraction(player, "Money Abuse", $"Attempted to add impossible currency amount: {_value}. Blocked.");
                 return false; 
-            }
-            return true;
-        }
-        
-        [HarmonyPatch(typeof(PlayerInventory), "UserCode_Cmd_SubtractCurrency__Int32")]
-        [HarmonyPrefix, HarmonyPriority(Priority.First)]
-        public static bool OnSubtractCurrency(PlayerInventory __instance, int _value)
-        {
-            if (!NetworkServer.active || !Main.EnableAntiCheat.Value) return true;
-            Player player = __instance.GetComponent<Player>();
-            if (Main.DisableForHost.Value && player._isHostPlayer) return true;
-            if (_value > Main.MaxPlausibleCurrencyGain.Value)
-            {
-                Main.LogInfraction(player, "Mod Command Abuse (FluffUtilities)", $"Attempted to subtract impossible currency amount: {_value}. Blocked.");
-                return false;
             }
             return true;
         }
     }
     #endregion
-	
-	#endregion
 
 	#region Movement & Airborne Protection
     [HarmonyPatch(typeof(NetworkTransformUnreliable), "OnClientToServerSync")]
