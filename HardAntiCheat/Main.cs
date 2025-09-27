@@ -53,6 +53,7 @@ namespace HardAntiCheat
         public static ConfigEntry<float> VerificationTimeout;
         public static ConfigEntry<int> MaxLogFileSizeMB;
         public static ConfigEntry<bool> EnableMovementChecks;
+        public static ConfigEntry<bool> EnableNoclipChecks;
 		public static ConfigEntry<float> MaxEffectiveSpeed;
         public static ConfigEntry<float> MovementGraceBuffer;
         public static ConfigEntry<float> TeleportDistanceThreshold;
@@ -75,11 +76,7 @@ namespace HardAntiCheat
         public static ConfigEntry<bool> LogPlayerID;
         public static ConfigEntry<bool> LogInfractionCount;
         public static ConfigEntry<bool> LogInfractionDetails;
-
-		// --- SERVER-SIDE MOD DETECTION DICTIONARIES ---
-        public static readonly Dictionary<uint, FluffDetectionState> FluffWatchlist = new Dictionary<uint, FluffDetectionState>();
         
-		// --- SERVER-SIDE DATA DICTIONARIES ---
 		public static readonly Dictionary<uint, Dictionary<string, float>> ServerRemainingCooldowns = new Dictionary<uint, Dictionary<string, float>>();
         public static readonly Dictionary<uint, PlayerPositionData> ServerPlayerPositions = new Dictionary<uint, PlayerPositionData>();
 		public static readonly Dictionary<uint, PlayerStatsData> ServerPlayerStats = new Dictionary<uint, PlayerStatsData>();
@@ -96,26 +93,6 @@ namespace HardAntiCheat
         internal static readonly Dictionary<int, Coroutine> PendingVerification = new Dictionary<int, Coroutine>();
         internal static readonly HashSet<int> VerifiedConnections = new HashSet<int>();
 
-        private const float MOD_SEQUENCE_TIMEOUT = 2f;
-
-        private void Update()
-        {
-            if (!NetworkServer.active) return;
-
-            List<uint> playersToRemove = new List<uint>();
-            foreach (var entry in FluffWatchlist)
-            {
-                if (Time.time - entry.Value.SparkleTimestamp > MOD_SEQUENCE_TIMEOUT)
-                {
-                    playersToRemove.Add(entry.Key);
-                }
-            }
-            foreach (var netId in playersToRemove)
-            {
-                FluffWatchlist.Remove(netId);
-            }
-        }
-		
 		private void Awake()
 		{
             Instance = this;
@@ -127,19 +104,13 @@ namespace HardAntiCheat
 
 			EnableAntiCheat = Config.Bind("1. General", "Enable AntiCheat", true, "Master switch to enable or disable all anti-cheat modules.");
 			DisableForHost = Config.Bind("1. General", "Disable Detections for Host", true, "If true, the player hosting the server will not be checked for infractions.");
-            
-            EnableClientVerification = Config.Bind(
-                "1. General", 
-                "Enable Client Verification", 
-                false, 
-                "OPTIONAL & NOT RECOMMENDED: If true, kicks players who don't have HardAntiCheat installed. This can be spoofed by cheaters and may block friends. It is better to leave this false and rely on the strong server-side checks."
-            );
-            
+            EnableNoclipChecks = Config.Bind("1. General", "Enable Noclip Checks", true, "Detects if a player is moving while their standard movement controller is disabled.");
+            EnableClientVerification = Config.Bind("1. General", "Enable Client Verification", false, "OPTIONAL & NOT RECOMMENDED: If true, kicks players who don't have HardAntiCheat installed. This can be spoofed by cheaters and may block friends.");
             VerificationTimeout = Config.Bind("1. General", "Verification Timeout", 10.0f, "How many seconds the server will wait for a client to verify before kicking them (if Client Verification is enabled).");
 			MaxLogFileSizeMB = Config.Bind("1. General", "Max Log File Size (MB)", 5, "If the infraction log exceeds this size, it will be archived on startup.");
 
             EnableMovementChecks = Config.Bind("2. Movement Detections", "Enable Teleport/Speed Checks", true, "Checks incoming player movement packets for impossibly fast travel and blocks them.");
-            MaxEffectiveSpeed = Config.Bind("2. Movement Detections", "Max Effective Speed", 100f, "The maximum plausible speed (units per second) a player can move. Increase this if lagging players get false flagged.");
+            MaxEffectiveSpeed = Config.Bind("2. Movement Detections", "Max Effective Speed", 100f, "The maximum plausible speed (units per second) a player can move.");
             MovementGraceBuffer = Config.Bind("2. Movement Detections", "Movement Grace Buffer", 10.0f, "A flat distance buffer added to the calculation to account for dashes and small lag spikes.");
             TeleportDistanceThreshold = Config.Bind("2. Movement Detections", "Teleport Distance Threshold", 50f, "Any movement faster than plausible that also covers more than this distance is logged as a 'Teleport' instead of a 'Speed Hack'.");
 			EnableAirborneChecks = Config.Bind("2. Movement Detections", "Enable Fly/Infinite Jump Checks", true, "Checks if players are airborne for an impossibly long time.");
@@ -181,11 +152,7 @@ namespace HardAntiCheat
 
         private void ReceiveHandshakeRequest(PacketHeader header, PacketBase packet)
         {
-            if (packet is AntiCheatHandshakeRequest)
-            {
-                Log.LogInfo("Received anti-cheat verification request from server. Responding...");
-                CodeTalkerNetwork.SendNetworkPacket(new AntiCheatHandshakeResponse());
-            }
+            if (packet is AntiCheatHandshakeRequest) CodeTalkerNetwork.SendNetworkPacket(new AntiCheatHandshakeResponse());
         }
 
         private void ReceiveHandshakeResponse(PacketHeader header, PacketBase packet)
@@ -193,7 +160,6 @@ namespace HardAntiCheat
             if (packet is AntiCheatHandshakeResponse)
             {
                 ulong senderSteamId = header.SenderID;
-
                 NetworkConnectionToClient targetConn = null;
                 foreach (NetworkConnectionToClient conn in NetworkServer.connections.Values)
                 {
@@ -204,9 +170,7 @@ namespace HardAntiCheat
                         break;
                     }
                 }
-
                 if (targetConn == null) return;
-
                 int senderConnectionId = targetConn.connectionId;
                 if (PendingVerification.TryGetValue(senderConnectionId, out Coroutine kickCoroutine))
                 {
@@ -223,7 +187,7 @@ namespace HardAntiCheat
             yield return new WaitForSeconds(VerificationTimeout.Value);
             if (conn != null && !VerifiedConnections.Contains(conn.connectionId))
             {
-                Log.LogWarning($"Disconnecting connection ID {conn.connectionId} for failing to verify HardAntiCheat presence.");
+                Log.LogWarning($"Disconnecting connection ID {conn.connectionId} for failing to verify presence.");
                 conn.Disconnect();
             }
             PendingVerification.Remove(conn.connectionId);
@@ -238,12 +202,11 @@ namespace HardAntiCheat
                 {
                     FileInfo logFileInfo = new FileInfo(InfractionLogPath);
                     long maxLogSizeBytes = MaxLogFileSizeMB.Value * 1024L * 1024L;
-
                     if (logFileInfo.Length > maxLogSizeBytes)
                     {
                         string archivePath = Path.Combine(Path.GetDirectoryName(InfractionLogPath), $"{Path.GetFileNameWithoutExtension(InfractionLogPath)}_ARCHIVED_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.txt");
                         File.Move(InfractionLogPath, archivePath);
-                        Log.LogInfo($"Infraction log exceeded {MaxLogFileSizeMB.Value}MB and was archived to: {archivePath}");
+                        Log.LogInfo($"Infraction log exceeded {MaxLogFileSizeMB.Value}MB and was archived.");
                     }
                 }
             }
@@ -279,10 +242,7 @@ namespace HardAntiCheat
                     
                     if (HostConsole._current != null) HostConsole._current.Init_ServerMessage("[HAC]: " + punishmentDetails);
 
-                    if (action == "kick")
-                    {
-                        player.connectionToClient.Disconnect();
-                    } 
+                    if (action == "kick") player.connectionToClient.Disconnect();
                     else // Ban
                     {
                         HC_PeerListEntry targetPeer = null;
@@ -293,7 +253,6 @@ namespace HardAntiCheat
                                 if (entry._netId != null && entry._netId.netId == netId) { targetPeer = entry; break; }
                             }
                         }
-                        
                         if (targetPeer != null)
                         {
                             HostConsole._current._selectedPeerEntry = targetPeer;
@@ -330,37 +289,7 @@ namespace HardAntiCheat
 			try { File.AppendAllText(InfractionLogPath, logMessage + Environment.NewLine); }
 			catch (Exception ex) { Log.LogError($"Failed to write to infraction log: {ex.Message}"); }
 		}
-
-        public static void LogDetection(NetworkBehaviour instance, string eventType, string details)
-        {
-            uint netId = instance.netId;
-			Player player = instance.GetComponent<Player>();
-			string playerName = player?._nickname ?? "Unknown";
-			string playerID = player?._steamID ?? $"netId:{netId}";
-            int currentInfractions = ServerPlayerInfractionCount.ContainsKey(netId) ? ServerPlayerInfractionCount[netId] : 0;
-            int maxInfractions = WarningsUntilAction.Value;
-
-            string logMessage;
-            if (EnableDetailedLogs.Value)
-            {
-                var sb = new StringBuilder();
-                sb.Append($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [DETECTION]");
-                var segments = new List<string>();
-                if (LogPlayerName.Value) segments.Add($"Player: {playerName}");
-                if (LogPlayerID.Value) segments.Add($"ID: {playerID}");
-                if (segments.Any()) sb.Append(" " + string.Join(" | ", segments));
-                sb.Append($" | Type: {eventType}");
-                if (LogInfractionDetails.Value) sb.Append($" | Details: {details}");
-                if (LogInfractionCount.Value) sb.Append($" | Current Warnings: {currentInfractions}/{maxInfractions}");
-                logMessage = sb.ToString();
-            }
-            else { return; }
-
-			Log.LogInfo(logMessage);
-			try { File.AppendAllText(InfractionLogPath, logMessage + Environment.NewLine); }
-			catch (Exception ex) { Log.LogError($"Failed to write to infraction log: {ex.Message}"); }
-        }
-
+        
         public static void ClearAllPlayerData(uint netId, int connectionId)
         {
             ServerRemainingCooldowns.Remove(netId);
@@ -374,7 +303,6 @@ namespace HardAntiCheat
             ServerSpeedCheckCooldowns.Remove(netId);
             ServerJumpCheckCooldowns.Remove(netId);
             ServerAirborneCheckCooldowns.Remove(netId);
-            FluffWatchlist.Remove(netId);
 
             if (PendingVerification.TryGetValue(connectionId, out Coroutine kickCoroutine))
             {
@@ -390,18 +318,10 @@ namespace HardAntiCheat
 	public static class PlayerSpawnPatch
 	{
 		private const float GRACE_PERIOD_SECONDS = 3.0f;
-        private static bool hasServerInitialized = false;
-
 		public static void Postfix(PlayerMove __instance)
 		{
 			if (!NetworkServer.active) return;
             
-            if (!hasServerInitialized)
-            {
-                Main.Log.LogInfo("First player has spawned. HardAntiCheat server-side modules are now active.");
-                hasServerInitialized = true;
-            }
-
             uint netId = __instance.netId;
             Main.ServerPlayerGracePeriod[netId] = Time.time + GRACE_PERIOD_SECONDS;
             if (!Main.ServerPlayerInitialSpeeds.ContainsKey(netId))
@@ -413,45 +333,7 @@ namespace HardAntiCheat
 	}
     #endregion
 	
-    #region UI Button Watcher
-    [HarmonyPatch(typeof(UnityEngine.UI.Button), "Press")]
-    public static class ButtonPressValidationPatch
-    {
-        private static DeathPromptManager _deathPromptManagerInstance;
-        [HarmonyPrefix]
-        public static bool OnButtonPress(UnityEngine.UI.Button __instance)
-        {
-            if (_deathPromptManagerInstance == null)
-            {
-                _deathPromptManagerInstance = UnityEngine.Object.FindObjectOfType<DeathPromptManager>();
-                if (_deathPromptManagerInstance == null) return true;
-            }
-            Button tearButton = Traverse.Create(_deathPromptManagerInstance).Field<Button>("_useTearButton").Value;
-            if (tearButton != null && __instance == tearButton)
-            {
-                Player mainPlayer = Player._mainPlayer;
-                if (mainPlayer != null)
-                {
-                    PlayerInventory inventory = mainPlayer.GetComponent<PlayerInventory>();
-                    if (inventory != null)
-                    {
-                        foreach (ItemData item in inventory._heldItems)
-                        {
-                            if (item != null && item._itemName == "Angela's Tear")
-                            {
-                                inventory.Cmd_UseConsumable(item);
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-            return true;
-        }
-    }
-    #endregion
-	
-	#region Item Usage Validation
+    #region Item Usage Validation
 	[HarmonyPatch(typeof(PlayerInventory), "UserCode_Cmd_UseConsumable__ItemData")]
 	public static class ItemUsageValidationPatch
 	{
@@ -475,7 +357,6 @@ namespace HardAntiCheat
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableReviveChecks.Value) return true;
 			if (Main.DisableForHost.Value && _p._isHostPlayer) return true;
-
 			if (__instance.netId == _p.netId)
 			{
 				Main.LogInfraction(__instance, "Unauthorized Action (Direct Self-Revive)", "Blocked direct call to self-revive.");
@@ -494,7 +375,6 @@ namespace HardAntiCheat
             Player player = __instance.GetComponent<Player>();
             if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableReviveChecks.Value) return true;
             if (Main.DisableForHost.Value && player._isHostPlayer) return true;
-
             if (__instance.Network_currentHealth <= 0)
             {
                 uint netId = player.netId;
@@ -506,7 +386,7 @@ namespace HardAntiCheat
                         return true;
                     }
                 }
-                Main.LogInfraction(__instance, "Unauthorized Action (Replenish while Dead)", "Blocked replenish call - was not authorized by UI button press.");
+                Main.LogInfraction(__instance, "Unauthorized Action (Replenish while Dead)", "Blocked replenish call - not authorized by item use.");
                 return false;
             }
             return true;
@@ -518,18 +398,6 @@ namespace HardAntiCheat
 	
 	#region Teleportation
     [HarmonyPatch(typeof(NetworkTransformBase), nameof(NetworkTransformBase.CmdTeleport), new Type[] { typeof(Vector3), typeof(Quaternion) })]
-    public static class CmdTeleportValidationPatch2
-    {
-    	public static bool Prefix(NetworkBehaviour __instance)
-    	{
-    		if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
-    		Player player = __instance.GetComponent<Player>();
-    		if (Main.DisableForHost.Value && player._isHostPlayer) { return true; }
-    		Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
-    		return false;
-    	}
-    }
-
     [HarmonyPatch(typeof(NetworkTransformBase), nameof(NetworkTransformBase.CmdTeleport), new Type[] { typeof(Vector3) })]
     public static class CmdTeleportValidationPatch
     {
@@ -537,63 +405,84 @@ namespace HardAntiCheat
     	{
     		if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
     		Player player = __instance.GetComponent<Player>();
-    		if (Main.DisableForHost.Value && player._isHostPlayer) { return true; }
+		    if (Main.DisableForHost.Value && player._isHostPlayer) return true;
     		Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
     		return false;
     	}
     }
     #endregion
+    
+    #region Money
+	[HarmonyPatch(typeof(PlayerInventory), "UserCode_Cmd_AddCurrency__Int32")]
+	public static class CurrencyDetectionPatch
+	{
+		[HarmonyPrefix, HarmonyPriority(Priority.First)]
+		public static bool OnAddCurrency(PlayerInventory __instance, int _value)
+		{
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value) return true;
+			Player player = __instance.GetComponent<Player>();
+			if (Main.DisableForHost.Value && player._isHostPlayer) return true;
+			if (_value > Main.MaxPlausibleCurrencyGain.Value)
+			{
+				Main.LogInfraction(player, "Money Abuse", $"Attempted to add impossible currency amount: {_value}. Blocked.");
+				return false; 
+			}
+			return true;
+		}
+	}
+	#endregion
 
-    [HarmonyPatch]
-    public static class CurrencyDetectionPatch
-    {
-        [HarmonyPatch(typeof(PlayerInventory), "UserCode_Cmd_AddCurrency__Int32")]
-        [HarmonyPrefix, HarmonyPriority(Priority.First)]
-        public static bool OnAddCurrency(PlayerInventory __instance, int _value)
-        {
-            if (!NetworkServer.active || !Main.EnableAntiCheat.Value) return true;
-            Player player = __instance.GetComponent<Player>();
-            if (Main.DisableForHost.Value && player._isHostPlayer) return true;
-            if (_value > Main.MaxPlausibleCurrencyGain.Value)
-            {
-                Main.LogInfraction(player, "Money Abuse", $"Attempted to add impossible currency amount: {_value}. Blocked.");
-                return false; 
-            }
-            return true;
-        }
-    }
-    #endregion
+	#endregion
 
 	#region Movement & Airborne Protection
-    [HarmonyPatch(typeof(NetworkTransformUnreliable), "OnClientToServerSync")]
+    [HarmonyPatch(typeof(NetworkTransformUnreliable), "UserCode_CmdClientToServerSync__Nullable`1__Nullable`1__Nullable`1")]
     public static class NetworkTransformSyncPatch
     {
         [HarmonyPrefix]
-        public static bool ValidateMovement(NetworkTransformUnreliable __instance, Vector3? position, Quaternion? rotation)
+        public static bool ValidateMovement(NetworkTransformUnreliable __instance, Vector3? position, Quaternion? rotation, Vector3? scale)
         {
-            if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value || !position.HasValue) return true;
-
+            if (!NetworkServer.active || !__instance.syncPosition || !position.HasValue) return true;
+            
             uint netId = __instance.netId;
             Player player = __instance.GetComponent<Player>();
 
             if (Main.ServerPlayerGracePeriod.ContainsKey(netId)) return true;
-
             if (Main.ServerPlayerPositions.TryGetValue(netId, out PlayerPositionData lastPositionData))
             {
-                float timeElapsed = Time.time - lastPositionData.Timestamp;
-                if (timeElapsed < 0.05f) return true;
-
                 float distanceTraveled = Vector3.Distance(lastPositionData.Position, position.Value);
-                float maxPossibleDistance = (Main.MaxEffectiveSpeed.Value * timeElapsed) + Main.MovementGraceBuffer.Value;
 
-                if (distanceTraveled > maxPossibleDistance)
+                // Noclip/Fly check: A player cannot move if their PlayerMove component is disabled.
+                if (Main.EnableNoclipChecks.Value)
                 {
-					if (Main.DisableForHost.Value) { if (player._isHostPlayer) return true; }
-								
-                    string cheatType = distanceTraveled > Main.TeleportDistanceThreshold.Value ? "Movement Hack (Teleport)" : "Movement Hack (Speed)";
-                    string details = $"Moved {distanceTraveled:F1} units in {timeElapsed:F2}s. Packet blocked.";
-                    Main.LogInfraction(__instance, cheatType, details);
-                    return false;
+                    PlayerMove playerMove = __instance.GetComponent<PlayerMove>();
+                    if (playerMove != null && !playerMove.enabled && distanceTraveled > 0.1f)
+                    {
+                        if (!player._isHostPlayer || !Main.DisableForHost.Value)
+                        {
+                            Main.LogInfraction(__instance, "Movement Hack (Noclip/Controller Disabled)", $"Player moved while their PlayerMove component was disabled. Packet blocked.");
+                            return false;
+                        }
+                    }
+                }
+
+                // Speed/Teleport Check
+                if (Main.EnableMovementChecks.Value)
+                {
+                    float timeElapsed = Time.time - lastPositionData.Timestamp;
+                    if (timeElapsed > 0.05f) // Need a minimum time delta to avoid false positives
+                    {
+                        float maxPossibleDistance = (Main.MaxEffectiveSpeed.Value * timeElapsed) + Main.MovementGraceBuffer.Value;
+                        if (distanceTraveled > maxPossibleDistance)
+                        {
+                            if (!player._isHostPlayer || !Main.DisableForHost.Value)
+                            {
+                                string cheatType = distanceTraveled > Main.TeleportDistanceThreshold.Value ? "Movement Hack (Teleport)" : "Movement Hack (Speed)";
+                                string details = $"Moved {distanceTraveled:F1} units in {timeElapsed:F2}s. Packet blocked.";
+                                Main.LogInfraction(__instance, cheatType, details);
+                                return false;
+                            }
+                        }
+                    }
                 }
             }
             Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = position.Value, Timestamp = Time.time };
@@ -841,7 +730,7 @@ namespace HardAntiCheat
         {
             if (Main.EnableClientVerification.Value)
             {
-                // The host is connection ID 0. We automatically verify them so they can't be kicked.
+                // The host is always connection ID 0. We automatically verify them so they can't be kicked.
                 NetworkConnectionToClient localConn = NetworkServer.localConnection;
                 if (localConn != null)
                 {
@@ -858,7 +747,7 @@ namespace HardAntiCheat
 		public static void Postfix(NetworkConnectionToClient _conn)
 		{
             if (!Main.EnableClientVerification.Value) return;
-            // The host is already auto-verified by the ServerStartPatch, but this prevents a broadcast for the host connection.
+            // The host is already auto-verified, so we skip them.
             if (_conn.connectionId == 0 || _conn is NetworkConnectionToServer) return;
 
             Main.Log.LogInfo($"New connection from ID: {_conn.connectionId}. Broadcasting verification request...");

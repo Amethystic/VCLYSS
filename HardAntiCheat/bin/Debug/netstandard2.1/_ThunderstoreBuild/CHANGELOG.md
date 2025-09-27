@@ -4,10 +4,10 @@
 
 ## V2 - Reforctory - Public Test Update (Updated each V2 revision/build)
 - Fixes "Players getting railed on skill init still" FULLY
-- Fixed fly/movement checks
+- Fixed fly/movement checks - [~] 9/27/25
 - Fixed host bool issue
 - Added logging choices depending on user choice
-- Patched Teleportation by call
+- Patched Teleportation by call - [~] 9/27/25
 - Updated Readme (Vx.x.1)
 - Canofwhoopass Bugfix (Thx homebrewery)
 - Airborne Height limiting check (Allows you to fly within the height limit)
@@ -15,7 +15,7 @@
 - Fixed Revive detection logic
 - Added Currency Add Check back (Yes i removed it in past versions)
 - Added Codetalker Anticheat Syncing (Optional)
-- Improved Teleportation Check
+- Improved Teleportation Check - [~] 9/27/25
 
 - In-Game Logical Actions fixes
 Example:
@@ -70,5 +70,6 @@ Example:
 - Improved Auto Kicking/Banning
 - Scrapped TanukiUtil Mod Detection (Had better ideas)
 - quick patch so silent update from 2.1.4
+- a dew bugfixes im starting to now put dates on when the updates happened starting now - [+] 9/27/25
 
 </details>
