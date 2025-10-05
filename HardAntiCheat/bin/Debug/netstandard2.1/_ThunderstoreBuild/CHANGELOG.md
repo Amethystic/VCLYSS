@@ -16,6 +16,7 @@
 - Added Currency Add Check back (Yes i removed it in past versions)
 - Added Codetalker Anticheat Syncing (Optional)
 - Improved Teleportation Check - [~] 9/27/25
+- Fixed Verification Handling
 
 - In-Game Logical Actions fixes
 Example:
@@ -59,7 +60,6 @@ Example:
 </details>
 
 ##
-
 <details><summary>Silent Updates</summary>
 
 ## Shh, these are silent updates - just fixes and stuff (Some might not be on here)

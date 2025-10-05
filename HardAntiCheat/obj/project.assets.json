@@ -2807,25 +2807,27 @@
     ]
   },
   "packageFolders": {
-    "C:\\Users\\Richard\\.nuget\\packages\\": {}
+    "C:\\Users\\soap\\.nuget\\packages\\": {}
   },
   "project": {
-    "version": "2.1.5",
+    "version": "2.1.7",
     "restore": {
-      "projectUniqueName": "F:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\HardAntiCheat.csproj",
+      "projectUniqueName": "D:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\HardAntiCheat.csproj",
       "projectName": "HardAntiCheat",
-      "projectPath": "F:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\HardAntiCheat.csproj",
-      "packagesPath": "C:\\Users\\Richard\\.nuget\\packages\\",
-      "outputPath": "F:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\obj\\",
+      "projectPath": "D:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\HardAntiCheat.csproj",
+      "packagesPath": "C:\\Users\\soap\\.nuget\\packages\\",
+      "outputPath": "D:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "F:\\Documents\\CODE\\Ours\\HardAntiCheat\\NuGet.Config",
-        "C:\\Users\\Richard\\AppData\\Roaming\\NuGet\\NuGet.Config"
+        "D:\\Documents\\CODE\\Ours\\HardAntiCheat\\NuGet.Config",
+        "C:\\Users\\soap\\AppData\\Roaming\\NuGet\\NuGet.Config",
+        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
       ],
       "originalTargetFrameworks": [
         "netstandard2.1"
       ],
       "sources": {
+        "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
         "https://api.nuget.org/v3/index.json": {},
         "https://nuget.bepinex.dev/v3/index.json": {},
         "https://nuget.windows10ce.com/nuget/v3/index.json": {}
@@ -2892,7 +2894,7 @@
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Users\\Richard\\.dotnet\\sdk\\9.0.303\\RuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.305\\RuntimeIdentifierGraph.json"
       }
     }
   }

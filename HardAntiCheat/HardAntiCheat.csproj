@@ -3,7 +3,7 @@
     <PropertyGroup>
         <Authors>com.HardAntiCheat.sftwre</Authors>
         <Product>HardAntiCheat</Product>
-        <Version>2.1.6</Version>
+        <Version>2.1.7</Version>
         <PackageId>HardAntiCheat</PackageId>
     </PropertyGroup>
 
