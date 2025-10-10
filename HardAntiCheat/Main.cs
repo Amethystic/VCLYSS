@@ -49,8 +49,6 @@ namespace HardAntiCheat
         public static Main Instance { get; private set; }
 
 
-        // --- CONFIGURATION ENTRIES ---
-        // (All config entries are correct and remain unchanged)
         #region Config and Data
         public static ConfigEntry<bool> EnableAntiCheat;
         public static ConfigEntry<bool> DisableForHost;
@@ -103,7 +101,7 @@ namespace HardAntiCheat
         {
             Instance = this;
             Log = Logger;
-            // (Path and Config binding logic is correct)
+            
             #region Config Binding
             string pluginsPath = Directory.GetParent(Path.GetDirectoryName(Info.Location)).FullName;
             string targetLogDirectory = Path.Combine(pluginsPath, "HardAntiCheat");
@@ -145,8 +143,6 @@ namespace HardAntiCheat
             Log.LogInfo($"[{ModInfo.NAME}] has been loaded.");
         }
 
-        // All other methods in Main (Handshake handlers, Kick coroutine, LogInfraction, etc.) are correct and remain unchanged.
-        // ...
         #region Other Methods
         public static void OnClientReceivedHandshakeRequest(HandshakeRequestMessage msg)
         {
@@ -308,7 +304,6 @@ namespace HardAntiCheat
         public static void Postfix(PlayerMove __instance)
         {
             // --- SERVER-SIDE LOGIC ---
-            // This block runs on the server for every player that spawns.
             if (NetworkServer.active)
             {
                 uint netId = __instance.netId;
@@ -319,7 +314,6 @@ namespace HardAntiCheat
                 }
                 Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = __instance.transform.position, Timestamp = Time.time };
 
-                // This is the correct time to SEND the request.
                 if (Main.EnableClientVerification.Value)
                 {
                     Player player = __instance.GetComponent<Player>();
@@ -338,17 +332,13 @@ namespace HardAntiCheat
             }
 
             // --- CLIENT-SIDE LOGIC ---
-            // This block runs on the client when ANY player object spawns.
-            // This is the correct time to REGISTER the handler, as the client is fully loaded.
             if (NetworkClient.active && !clientHandshakeSetupDone)
             {
-                // Manually register the serializers for our custom messages.
                 Writer<HandshakeRequestMessage>.write = HandshakeMessageExtensions.WriteHandshakeRequestMessage;
                 Writer<HandshakeResponseMessage>.write = HandshakeMessageExtensions.WriteHandshakeResponseMessage;
                 Reader<HandshakeRequestMessage>.read = HandshakeMessageExtensions.ReadHandshakeRequestMessage;
                 Reader<HandshakeResponseMessage>.read = HandshakeMessageExtensions.ReadHandshakeResponseMessage;
 
-                // Register the handler to listen for the server's request.
                 NetworkClient.RegisterHandler<HandshakeRequestMessage>(Main.OnClientReceivedHandshakeRequest, false);
                 clientHandshakeSetupDone = true;
                 Main.Log.LogInfo("HAC Client-side handshake handler and serializers registered.");
@@ -357,9 +347,376 @@ namespace HardAntiCheat
     }
     #endregion
 
-    // All other game mechanic patches are correct and remain unchanged...
+    // --- ALL ORIGINAL GAME PATCHES RESTORED ---
     #region Game Patches
-    // ...
+    [HarmonyPatch(typeof(PlayerInventory), "UserCode_Cmd_UseConsumable__ItemData")]
+	public static class ItemUsageValidationPatch
+	{
+		[HarmonyPrefix]
+		public static void GrantTokenOnTearUsage(PlayerInventory __instance, ItemData _itemData)
+		{
+			if (NetworkServer.active && _itemData != null && _itemData._itemName == "Angela's Tear")
+			{
+				Main.AuthorizedSelfRevives[__instance.netId] = Time.time;
+			}
+		}
+	}
+	
+    [HarmonyPatch(typeof(StatusEntity), "Cmd_RevivePlayer")]
+	public static class ServerAuthorityValidationPatch
+	{
+		[HarmonyPrefix]
+		public static bool ValidateRevive(StatusEntity __instance, Player _p)
+		{
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableReviveChecks.Value) return true;
+			if (Main.DisableForHost.Value && _p._isHostPlayer) return true;
+			if (__instance.netId == _p.netId)
+			{
+				Main.LogInfraction(__instance, "Unauthorized Action (Direct Self-Revive)", "Blocked direct call to self-revive.");
+				return false;
+			}
+			return true;
+		}
+    }
+
+    [HarmonyPatch(typeof(StatusEntity), "Cmd_ReplenishAll")]
+    public static class ReplenishWhileDeadPatch
+    {
+        [HarmonyPrefix]
+        public static bool ValidateReplenish(StatusEntity __instance)
+        {
+            Player player = __instance.GetComponent<Player>();
+            if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableReviveChecks.Value) return true;
+            if (Main.DisableForHost.Value && player._isHostPlayer) return true;
+            if (__instance.Network_currentHealth <= 0)
+            {
+                uint netId = player.netId;
+                if (Main.AuthorizedSelfRevives.TryGetValue(netId, out float timestamp))
+                {
+                    if (Time.time - timestamp < 1.5f)
+                    {
+                        Main.AuthorizedSelfRevives.Remove(netId);
+                        return true;
+                    }
+                }
+                Main.LogInfraction(__instance, "Unauthorized Action (Replenish while Dead)", "Blocked replenish call - not authorized by item use.");
+                return false;
+            }
+            return true;
+        }
+    }
+	
+    [HarmonyPatch(typeof(NetworkTransformBase), nameof(NetworkTransformBase.CmdTeleport), new Type[] { typeof(Vector3), typeof(Quaternion) })]
+    [HarmonyPatch(typeof(NetworkTransformBase), nameof(NetworkTransformBase.CmdTeleport), new Type[] { typeof(Vector3) })]
+    public static class CmdTeleportValidationPatch
+    {
+    	public static bool Prefix(NetworkBehaviour __instance)
+    	{
+    		if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableMovementChecks.Value) return true;
+    		Player player = __instance.GetComponent<Player>();
+		    if (Main.DisableForHost.Value && player._isHostPlayer) return true;
+    		Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
+    		return false;
+    	}
+    }
+    
+	[HarmonyPatch(typeof(PlayerInventory), "UserCode_Cmd_AddCurrency__Int32")]
+	public static class CurrencyDetectionPatch
+	{
+		[HarmonyPrefix, HarmonyPriority(Priority.First)]
+		public static bool OnAddCurrency(PlayerInventory __instance, int _value)
+		{
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value) return true;
+			Player player = __instance.GetComponent<Player>();
+			if (Main.DisableForHost.Value && player._isHostPlayer) return true;
+			if (_value > Main.MaxPlausibleCurrencyGain.Value)
+			{
+				Main.LogInfraction(player, "Money Abuse", $"Attempted to add impossible currency amount: {_value}. Blocked.");
+				return false; 
+			}
+			return true;
+		}
+	}
+
+    [HarmonyPatch(typeof(NetworkTransformUnreliable), "UserCode_CmdClientToServerSync__Nullable`1__Nullable`1__Nullable`1")]
+    public static class NetworkTransformSyncPatch
+    {
+        [HarmonyPrefix]
+        public static bool ValidateMovement(NetworkTransformUnreliable __instance, Vector3? position, Quaternion? rotation, Vector3? scale)
+        {
+            if (!NetworkServer.active || !__instance.syncPosition || !position.HasValue) return true;
+            
+            uint netId = __instance.netId;
+            Player player = __instance.GetComponent<Player>();
+
+            if (Main.ServerPlayerGracePeriod.ContainsKey(netId)) return true;
+            if (Main.ServerPlayerPositions.TryGetValue(netId, out PlayerPositionData lastPositionData))
+            {
+                float distanceTraveled = Vector3.Distance(lastPositionData.Position, position.Value);
+
+                if (Main.EnableNoclipChecks.Value)
+                {
+                    PlayerMove playerMove = __instance.GetComponent<PlayerMove>();
+                    if (playerMove != null && !playerMove.enabled && distanceTraveled > 0.1f)
+                    {
+                        if (!player._isHostPlayer || !Main.DisableForHost.Value)
+                        {
+                            Main.LogInfraction(__instance, "Movement Hack (Noclip/Controller Disabled)", $"Player moved while their PlayerMove component was disabled. Packet blocked.");
+                            return false;
+                        }
+                    }
+                }
+
+                if (Main.EnableMovementChecks.Value)
+                {
+                    float timeElapsed = Time.time - lastPositionData.Timestamp;
+                    if (timeElapsed > 0.05f)
+                    {
+                        float maxPossibleDistance = (Main.MaxEffectiveSpeed.Value * timeElapsed) + Main.MovementGraceBuffer.Value;
+                        if (distanceTraveled > maxPossibleDistance)
+                        {
+                            if (!player._isHostPlayer || !Main.DisableForHost.Value)
+                            {
+                                string cheatType = distanceTraveled > Main.TeleportDistanceThreshold.Value ? "Movement Hack (Teleport)" : "Movement Hack (Speed)";
+                                string details = $"Moved {distanceTraveled:F1} units in {timeElapsed:F2}s. Packet blocked.";
+                                Main.LogInfraction(__instance, cheatType, details);
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+            Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = position.Value, Timestamp = Time.time };
+            return true;
+        }
+    }
+
+	[HarmonyPatch(typeof(PlayerMove), "Init_Jump")]
+	public static class JumpValidationPatch
+	{
+		public static bool Prefix(PlayerMove __instance)
+		{
+			Player player = __instance.GetComponent<Player>();
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableAirborneChecks.Value) return true;
+			if (Main.DisableForHost.Value && player._isHostPlayer) return true;
+            
+			uint netId = __instance.netId;
+			if (!Main.ServerPlayerAirborneStates.ContainsKey(netId))
+				Main.ServerPlayerAirborneStates[netId] = new PlayerAirborneData();
+			PlayerAirborneData airData = Main.ServerPlayerAirborneStates[netId];
+			if(airData.ServerSideJumpCount >= Main.JumpThreshold.Value) { return false; }
+			airData.ServerSideJumpCount++;
+			Main.ServerPlayerAirborneStates[netId] = airData;
+			return true;
+		}
+	}
+	
+	[HarmonyPatch(typeof(PlayerMove), "Update")]
+    public static class ContinuousValidationPatch
+    {
+        private const float MAX_ALLOWED_AIR_TIME = 10.0f;
+        private const float VERTICAL_STALL_TOLERANCE = 0.05f;
+        private const float VERTICAL_STALL_GRACE_PERIOD = 0.5f;
+        private const float MAX_FLIGHT_HEIGHT = 4240f;
+
+        public static void Postfix(PlayerMove __instance)
+        {
+            if (!NetworkServer.active || !Main.EnableAntiCheat.Value || AtlyssNetworkManager._current._soloMode) return;
+            
+            Player player = __instance.GetComponent<Player>();
+            uint netId = __instance.netId;
+            
+            if (Main.ServerPlayerGracePeriod.TryGetValue(netId, out float gracePeriodEndTime))
+            {
+                if (Time.time < gracePeriodEndTime) { return; } else { Main.ServerPlayerGracePeriod.Remove(netId); }
+            }
+
+            if (Main.EnableSpeedChecks.Value)
+            {
+                if (!Main.ServerSpeedCheckCooldowns.ContainsKey(netId) || Time.time > Main.ServerSpeedCheckCooldowns[netId])
+                {
+                    if (Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float initialSpeed))
+                    {
+                        if (__instance._movSpeed > Main.MaxEffectiveSpeed.Value || __instance._movSpeed < 20)
+                        {
+	                        if (!player._isHostPlayer || !Main.DisableForHost.Value)
+	                        {
+                                Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Illegal move speed of {__instance._movSpeed}. Reverting.");
+                                __instance.Reset_MoveSpeed();
+                                Main.ServerSpeedCheckCooldowns[netId] = Time.time + Main.SpeedHackDetectionCooldown.Value;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (Main.EnableAirborneChecks.Value)
+            {
+                Vector3 currentPosition = __instance.transform.position;
+                PlayerAirborneData airData = Main.ServerPlayerAirborneStates.ContainsKey(netId) ? Main.ServerPlayerAirborneStates[netId] : new PlayerAirborneData();
+
+                if (!Main.ServerJumpCheckCooldowns.ContainsKey(netId) || Time.time > Main.ServerJumpCheckCooldowns[netId])
+                {
+                    if (__instance._maxJumps >= Main.JumpThreshold.Value)
+                    {
+	                    if (!player._isHostPlayer || !Main.DisableForHost.Value)
+	                    {
+		                    Main.LogInfraction(__instance, "Stat Manipulation (Max Jumps)", $"Client reported _maxJumps of {__instance._maxJumps}. Reverting.");
+		                    __instance._maxJumps = 2;
+		                    Main.ServerJumpCheckCooldowns[netId] = Time.time + Main.JumpHackDetectionCooldown.Value;
+	                    }
+                    }
+                }
+
+                if (__instance.RayGroundCheck())
+                {
+                    airData.AirTime = 0f;
+                    airData.ServerSideJumpCount = 0;
+                    airData.LastGroundedPosition = currentPosition;
+                    airData.VerticalStallTime = 0f;
+                }
+                else
+                {
+                    airData.AirTime += Time.deltaTime;
+                    if (Mathf.Abs(currentPosition.y - airData.LastVerticalPosition) < VERTICAL_STALL_TOLERANCE) airData.VerticalStallTime += Time.deltaTime;
+                    else airData.VerticalStallTime = 0f;
+                }
+                airData.LastVerticalPosition = currentPosition.y;
+                
+                bool isExemptHost = Main.DisableForHost.Value && player._isHostPlayer;
+                if (currentPosition.y > MAX_FLIGHT_HEIGHT && !isExemptHost)
+                {
+                    Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Exceeded max height. Reverting.");
+                    __instance.transform.position = airData.LastGroundedPosition;
+                    return;
+                }
+                
+                if (airData.AirTime > MAX_ALLOWED_AIR_TIME && airData.VerticalStallTime < VERTICAL_STALL_GRACE_PERIOD)
+                {
+	                if (!Main.ServerAirborneCheckCooldowns.ContainsKey(netId) || Time.time > Main.ServerAirborneCheckCooldowns[netId])
+	                {
+		                if (!isExemptHost) 
+		                {
+			                Main.LogInfraction(__instance, "Movement Hack (Fly)", $"Airborne for {airData.AirTime:F1}s. Reverting.");
+			                Main.ServerAirborneCheckCooldowns[netId] = Time.time + Main.AirborneHackDetectionCooldown.Value;
+		                }
+	                }
+                    __instance.transform.position = airData.LastGroundedPosition;
+                    airData.AirTime = 0f;
+                }
+                Main.ServerPlayerAirborneStates[netId] = airData;
+            }
+        }
+    }
+	
+	[HarmonyPatch]
+	public static class ExperienceValidationPatch
+	{
+		[HarmonyPatch(typeof(PlayerStats), "set_Network_currentExp")]
+		[HarmonyPrefix]
+		public static bool ValidateExperienceChange(PlayerStats __instance, ref int value)
+		{
+			Player player = __instance.GetComponent<Player>();
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableExperienceChecks.Value) return true;
+			
+            uint netId = __instance.netId;
+			if (!Main.ServerPlayerStats.TryGetValue(netId, out PlayerStatsData stat))
+			{
+				Main.ServerPlayerStats[netId] = new PlayerStatsData { Experience = value, Level = __instance.Network_currentLevel };
+				return true;
+			}
+			int oldExperience = stat.Experience;
+			int experienceGain = value - oldExperience;
+
+			if (experienceGain > Main.MaxPlausibleXPGain.Value)
+			{
+				if (Main.DisableForHost.Value && player._isHostPlayer) return true;
+				Main.LogInfraction(__instance, "Stat Manipulation (Experience)", $"Attempted to gain {experienceGain} XP. Blocked.");
+				value = oldExperience;
+			}
+			PlayerStatsData currentStats = Main.ServerPlayerStats[netId];
+			currentStats.Experience = value;
+			Main.ServerPlayerStats[netId] = currentStats;
+			return true;
+		}
+
+		[HarmonyPatch(typeof(PlayerStats), "set_Network_currentLevel")]
+		[HarmonyPrefix]
+		public static bool ValidateLevelChange(PlayerStats __instance, ref int value)
+		{
+			Player player = __instance.GetComponent<Player>();
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableExperienceChecks.Value) return true;
+
+			uint netId = __instance.netId;
+			if (!Main.ServerPlayerStats.TryGetValue(netId, out PlayerStatsData stat))
+			{
+				Main.ServerPlayerStats[netId] = new PlayerStatsData { Experience = __instance.Network_currentExp, Level = value };
+				return true;
+			}
+			int oldLevel = stat.Level;
+			int levelGain = value - oldLevel;
+			if (levelGain > 1)
+			{
+				if (Main.DisableForHost.Value && player._isHostPlayer) { return true; }
+				Main.LogInfraction(__instance, "Stat Manipulation (Level)", $"Attempted to jump from level {oldLevel} to {value}. Blocked.");
+				value = oldLevel;
+			}
+			PlayerStatsData currentStats = Main.ServerPlayerStats[netId];
+			currentStats.Level = value;
+			Main.ServerPlayerStats[netId] = currentStats;
+			return true;
+		}
+	}
+    
+	[HarmonyPatch]
+	public static class CombatValidationPatch
+	{
+        [HarmonyPatch(typeof(PlayerCasting), "Update")]
+        [HarmonyPostfix]
+        public static void CooldownUpdate(PlayerCasting __instance)
+        {
+            if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableCooldownChecks.Value) return;
+            uint netId = __instance.netId;
+            if (Main.ServerRemainingCooldowns.TryGetValue(netId, out var playerSkills))
+            {
+                var skillsToRemove = new List<string>();
+                var skillKeys = new List<string>(playerSkills.Keys);
+                foreach (var skillName in skillKeys)
+                {
+                    float timeToReduce = Time.deltaTime + (Time.deltaTime * __instance._cooldownMod);
+                    float newRemainingTime = playerSkills[skillName] - timeToReduce;
+                    if (newRemainingTime <= 0) skillsToRemove.Add(skillName);
+                    else playerSkills[skillName] = newRemainingTime;
+                }
+                foreach (var skillName in skillsToRemove) playerSkills.Remove(skillName);
+            }
+        }
+        
+        [HarmonyPatch(typeof(PlayerCasting), "Server_CastSkill")]
+		[HarmonyPrefix]
+		public static bool UnifiedCooldownValidation(PlayerCasting __instance)
+		{
+			Player player = __instance.GetComponent<Player>();
+			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableCooldownChecks.Value) return true;
+
+            ScriptableSkill skillToCast = __instance._currentCastSkill;
+            if (skillToCast == null) return true; 
+
+			uint netId = __instance.netId;
+			
+			if (Main.ServerRemainingCooldowns.TryGetValue(netId, out var playerSkills) && playerSkills.ContainsKey(skillToCast.name))
+			{
+				if (Main.DisableForHost.Value && player._isHostPlayer) { return true; }
+                __instance.Server_InterruptCast();
+                Main.LogInfraction(__instance, "Skill Cooldown Bypass", $"Attempted to cast {skillToCast.name} while on cooldown.");
+				return false; 
+			}
+
+            if (!Main.ServerRemainingCooldowns.ContainsKey(netId)) Main.ServerRemainingCooldowns[netId] = new Dictionary<string, float>();
+			Main.ServerRemainingCooldowns[netId][skillToCast.name] = skillToCast._skillRankParams._baseCooldown;
+			return true;
+		}
+	}
     #endregion
 
     #region Network Connection Management
@@ -387,17 +744,6 @@ namespace HardAntiCheat
                     Main.Log.LogInfo($"Host connection (ID: {localConn.connectionId}) has been automatically verified.");
                 }
             }
-        }
-    }
-
-    // ClientStartPatch is no longer needed, as its logic is now correctly timed in PlayerSpawnPatch.
-
-    [HarmonyPatch(typeof(AtlyssNetworkManager), "OnServerConnect")]
-    public static class ServerConnectPatch
-    {
-        public static void Postfix(NetworkConnectionToClient _conn)
-        {
-            // This is intentionally blank.
         }
     }
 
