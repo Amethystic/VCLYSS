@@ -1,6 +1,6 @@
 {
   "name": "HardAntiCheat",
-  "version_number": "2.1.7",
+  "version_number": "2.1.9",
   "website_url": "https://store.steampowered.com/app/2768430/ATLYSS/",
   "description": "Anti-cheat plugin for Atlyss multiplayer. (In Public Testing)",
   "dependencies": [

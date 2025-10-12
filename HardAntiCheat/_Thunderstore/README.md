@@ -31,6 +31,7 @@ These mods are not required dependencies but are confirmed to be compatible and 
 | :--- | :---: | :--- |
 | `Enable AntiCheat` | ✅ | Master switch to enable or disable all anti-cheat modules. |
 | `Disable Detections for Host` | ✅ | If true, the player hosting will not be checked. Recommended for admins. |
+| `Trusted SteamIDs` | ✅ | A comma-separated list of 64-bit SteamIDs for users who should be exempt from all anti-cheat checks. |
 | `Max Log File Size (MB)` | 5 | If the infraction log exceeds this size on startup, it will be archived. |
 
 ### Movement Detections

@@ -2,7 +2,12 @@
 
 <details><summary>Public Test Updates</summary>
 
-## V2 - Reforctory - Public Test Update (Updated each V2 revision/build)
+## Game Update - Public Test Update (Updated each V2 revision/build)
+- Updated to Latest game update - [+] 10/11/25
+- Fixed Detections being missing - [+] 10/11/25
+- Added STEAM:ID Whitelist/Blacklist - [+] 10/12/25
+
+## V2 - Refactory - Public Test Update (cont ^)
 - Fixes "Players getting railed on skill init still" FULLY
 - Fixed fly/movement checks - [~] 9/27/25
 - Fixed host bool issue
