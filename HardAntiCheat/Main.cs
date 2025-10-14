@@ -4,15 +4,35 @@ using BepInEx.Logging;
 using HarmonyLib;
 using Mirror;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using CodeTalker.Networking;
+using CodeTalker.Packets;
+using Newtonsoft.Json;
+using Steamworks;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace HardAntiCheat
 {
+    #region Custom Network Packets (CodeYapper)
+    public class HAC_HandshakeRequest : PacketBase
+    {
+        public override string PacketSourceGUID => "HardAntiCheat";
+        [JsonProperty] public ulong TargetSteamID;
+        [JsonProperty] public string ChallengeToken;
+    }
+
+    public class HAC_HandshakeResponse : PacketBase
+    {
+        public override string PacketSourceGUID => "HardAntiCheat";
+        [JsonProperty] public string ChallengeToken;
+    }
+    #endregion
+
     #region Data Structures
     public struct PlayerPositionData { public Vector3 Position; public float Timestamp; }
 	public struct PlayerStatsData { public int Level; public int Experience; }
@@ -21,16 +41,21 @@ namespace HardAntiCheat
 
 	[BepInPlugin(ModInfo.GUID, ModInfo.NAME, ModInfo.VERSION)]
 	[BepInDependency("Marioalexsan.PerfectGuard", BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency("CodeTalker")]
 	public class Main : BaseUnityPlugin
 	{
 		private readonly Harmony harmony = new Harmony(ModInfo.GUID);
 		internal static ManualLogSource Log;
 		internal static string InfractionLogPath;
+        public static Main Instance { get; private set; }
+
 
 		// --- CONFIGURATION ENTRIES ---
 		public static ConfigEntry<bool> EnableAntiCheat;
 		public static ConfigEntry<bool> DisableForHost;
         public static ConfigEntry<string> TrustedSteamIDs;
+        public static ConfigEntry<bool> EnableClientVerification;
+        public static ConfigEntry<float> VerificationTimeout;
         public static ConfigEntry<int> MaxLogFileSizeMB;
         public static ConfigEntry<bool> EnableMovementChecks;
 		public static ConfigEntry<float> MaxEffectiveSpeed;
@@ -72,9 +97,14 @@ namespace HardAntiCheat
         public static readonly Dictionary<uint, float> ServerJumpCheckCooldowns = new Dictionary<uint, float>();
         public static readonly Dictionary<uint, float> ServerAirborneCheckCooldowns = new Dictionary<uint, float>();
         public static readonly Dictionary<uint, float> AuthorizedSelfRevives = new Dictionary<uint, float>();
+        
+        // --- CLIENT VERIFICATION DICTIONARIES ---
+        internal static readonly Dictionary<ulong, (string Token, Coroutine KickCoroutine)> PendingVerification = new Dictionary<ulong, (string, Coroutine)>();
+        internal static readonly HashSet<ulong> VerifiedSteamIDs = new HashSet<ulong>();
 		
 		private void Awake()
 		{
+            Instance = this;
 			Log = Logger;
             string pluginsPath = Directory.GetParent(Path.GetDirectoryName(Info.Location)).FullName;
             string targetLogDirectory = Path.Combine(pluginsPath, "HardAntiCheat");
@@ -82,24 +112,24 @@ namespace HardAntiCheat
             InfractionLogPath = Path.Combine(targetLogDirectory, $"{ModInfo.NAME}_InfractionLog.txt");
 
 			EnableAntiCheat = Config.Bind("1. General", "Enable AntiCheat", true, "Master switch to enable or disable all anti-cheat modules.");
-			DisableForHost = Config.Bind("1. General", "Disable Detections for Host", true, "If true, the player hosting the server will not be checked for infractions. Recommended for hosts who use admin commands.");
+			DisableForHost = Config.Bind("1. General", "Disable Detections for Host", true, "If true, the player hosting the server will not be checked for infractions.");
             TrustedSteamIDs = Config.Bind("1. General", "Trusted SteamIDs", "", "A comma-separated list of 64-bit SteamIDs for users who should be exempt from all anti-cheat checks.");
-			MaxLogFileSizeMB = Config.Bind("1. General", "Max Log File Size (MB)", 5, "If the infraction log exceeds this size, it will be archived on startup to prevent it from growing infinitely.");
+			MaxLogFileSizeMB = Config.Bind("1. General", "Max Log File Size (MB)", 5, "If the infraction log exceeds this size, it will be archived on startup.");
 
             EnableMovementChecks = Config.Bind("2. Movement Detections", "Enable Teleport/Distance Checks", true, "Checks the final result of player movement to catch physics-based speed hacks and teleports.");
-            MaxEffectiveSpeed = Config.Bind("2. Movement Detections", "Max Effective Speed", 100f, "The maximum plausible speed (units per second) a player can move. Increase this if lagging players get false flagged.");
-            MovementGraceBuffer = Config.Bind("2. Movement Detections", "Movement Grace Buffer", 10.0f, "A flat distance buffer added to the calculation to account for dashes, knockbacks, and small lag spikes.");
+            MaxEffectiveSpeed = Config.Bind("2. Movement Detections", "Max Effective Speed", 100f, "The maximum plausible speed (units per second) a player can move.");
+            MovementGraceBuffer = Config.Bind("2. Movement Detections", "Movement Grace Buffer", 10.0f, "A flat distance buffer added to the calculation to account for dashes and small lag spikes.");
             MovementTimeThreshold = Config.Bind("2. Movement Detections", "Movement Time Threshold", 5.5f, "The time (in seconds) between position checks. Higher values are more lenient on lag but less precise.");
             TeleportDistanceThreshold = Config.Bind("2. Movement Detections", "Teleport Distance Threshold", 50f, "Any movement faster than plausible that also covers more than this distance is logged as a 'Teleport' instead of a 'Speed Hack'.");
 			EnableAirborneChecks = Config.Bind("2. Movement Detections", "Enable Fly/Infinite Jump Checks", true, "Checks if players are airborne for an impossibly long time and have an invalid number of max jumps.");
 			EnableSpeedChecks = Config.Bind("2. Movement Detections", "Enable Base Speed Stat Audits", true, "Continuously checks if a player's base movement speed stat has been illegally modified and reverts it.");
 			JumpThreshold = Config.Bind("2. Movement Detections", "Jump threshold", 8, "The maximum number of jumps a player is allowed to perform before returning to the ground.");
-            SpeedHackDetectionCooldown = Config.Bind("2. Movement Detections", "Speed Hack Detection Cooldown", 2.0f, "How long (in seconds) the anti-cheat will wait before logging another speed stat infraction for the same player. Prevents log spam.");
-            JumpHackDetectionCooldown = Config.Bind("2. Movement Detections", "Jump Hack Detection Cooldown", 2.0f, "How long (in seconds) the anti-cheat will wait before logging another jump stat infraction for the same player. Prevents log spam.");
-            AirborneHackDetectionCooldown = Config.Bind("2. Movement Detections", "Airborne Hack Detection Cooldown", 10.0f, "How long (in seconds) the anti-cheat will wait before logging another airborne infraction for the same player. Prevents log spam.");
+            SpeedHackDetectionCooldown = Config.Bind("2. Movement Detections", "Speed Hack Detection Cooldown", 2.0f, "How long (in seconds) the anti-cheat will wait before logging another speed stat infraction for the same player.");
+            JumpHackDetectionCooldown = Config.Bind("2. Movement Detections", "Jump Hack Detection Cooldown", 2.0f, "How long (in seconds) the anti-cheat will wait before logging another jump stat infraction for the same player.");
+            AirborneHackDetectionCooldown = Config.Bind("2. Movement Detections", "Airborne Hack Detection Cooldown", 10.0f, "How long (in seconds) the anti-cheat will wait before logging another airborne infraction for the same player.");
 
 			EnableExperienceChecks = Config.Bind("3. Stat Detections", "Enable Experience/Level Checks", true, "Prevents players from gaining huge amounts of XP or multiple levels at once based on the 'Max Plausible XP Gain' limit.");
-            MaxPlausibleXPGain = Config.Bind("3. Stat Detections", "Max Plausible XP Gain", 77000, "The maximum amount of XP a player can gain in a single transaction. Adjust this based on your server's max XP rewards.");
+            MaxPlausibleXPGain = Config.Bind("3. Stat Detections", "Max Plausible XP Gain", 77000, "The maximum amount of XP a player can gain in a single transaction.");
 
 			EnableCooldownChecks = Config.Bind("4. Combat Detections", "Enable Skill Cooldown Checks", true, "Silently enforces server-side cooldowns, blocking premature skill usage.");
 			EnableReviveChecks = Config.Bind("4. Combat Detections", "Enable Self-Revive Checks", true, "Prevents players from reviving themselves while dead.");
@@ -108,18 +138,69 @@ namespace HardAntiCheat
 			WarningsUntilAction = Config.Bind("5. Punishments", "Infractions Until Action", 5, "Number of infractions a player can commit before the selected action is taken.");
 			ActionType = Config.Bind("5. Punishments", "Action Type", "Kick", new ConfigDescription("The action to take when a player reaches the infraction limit.", new AcceptableValueList<string>("Kick", "Ban")));
 			
-            EnableDetailedLogs = Config.Bind("6. Logging", "Enable Detailed Logs", true, "Master switch for detailed infraction logs. If false, a minimal log is created. If true, uses the options below.");
+            EnableDetailedLogs = Config.Bind("6. Logging", "Enable Detailed Logs", true, "Master switch for detailed infraction logs.");
             LogPlayerName = Config.Bind("6. Logging", "Log Player Name", true, "Include the player's name in detailed logs.");
             LogPlayerID = Config.Bind("6. Logging", "Log Player ID", true, "Include the player's SteamID/netId in detailed logs.");
             LogInfractionDetails = Config.Bind("6. Logging", "Log Infraction Details", true, "Include the specific reason/details of the infraction in detailed logs.");
             LogInfractionCount = Config.Bind("6. Logging", "Log Infraction Count", true, "Include the player's current warning count in detailed logs.");
             
+            EnableClientVerification = Config.Bind("7. Testing", "Enable Client Verification", false, "If true, kicks players who don't have HardAntiCheat installed. This can be spoofed by cheaters and may block friends.");
+            VerificationTimeout = Config.Bind("7. Testing", "Verification Timeout", 10.0f, "How many seconds the server will wait for a client to verify before kicking them (if Client Verification is enabled).");
+            
             CheckAndArchiveLogFile();
             ParseWhitelist();
             TrustedSteamIDs.SettingChanged += (s, e) => ParseWhitelist();
+
+            CodeTalkerNetwork.RegisterListener<HAC_HandshakeRequest>(OnClientReceivedHandshakeRequest);
+            CodeTalkerNetwork.RegisterListener<HAC_HandshakeResponse>(OnServerReceivedHandshakeResponse);
+            
 			harmony.PatchAll();
 			Log.LogInfo($"[{ModInfo.NAME}] has been loaded. Infractions will be logged to: {InfractionLogPath}");
 		}
+        
+        public static void OnClientReceivedHandshakeRequest(PacketHeader header, PacketBase packet)
+        {
+            if (packet is HAC_HandshakeRequest request)
+            {
+                if (ulong.TryParse(Player._mainPlayer?._steamID, out ulong mySteamId) && request.TargetSteamID == mySteamId)
+                {
+                    Log.LogInfo("Received verification request from server. Sending response...");
+                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HandshakeResponse { ChallengeToken = request.ChallengeToken });
+                }
+            }
+        }
+
+        public static void OnServerReceivedHandshakeResponse(PacketHeader header, PacketBase packet)
+        {
+            if (packet is HAC_HandshakeResponse response)
+            {
+                ulong senderSteamId = header.SenderID;
+                if (PendingVerification.TryGetValue(senderSteamId, out var verificationData))
+                {
+                    if (verificationData.Token == response.ChallengeToken)
+                    {
+                        Instance.StopCoroutine(verificationData.KickCoroutine);
+                        PendingVerification.Remove(senderSteamId);
+                        VerifiedSteamIDs.Add(senderSteamId);
+                        Log.LogInfo($"SteamID {senderSteamId} has been successfully verified.");
+                    }
+                }
+            }
+        }
+
+        public IEnumerator KickClientAfterDelay(Player player)
+        {
+            if (player == null || !ulong.TryParse(player._steamID, out ulong steamId)) yield break;
+            
+            yield return new WaitForSeconds(VerificationTimeout.Value);
+
+            if (player != null && !VerifiedSteamIDs.Contains(steamId))
+            {
+                Log.LogWarning($"Disconnecting player {player._nickname} (SteamID: {steamId}) for failing to verify presence of HAC.");
+                player.connectionToClient.Disconnect();
+            }
+            PendingVerification.Remove(steamId);
+        }
 
         private static void ParseWhitelist()
         {
@@ -271,7 +352,7 @@ namespace HardAntiCheat
 			catch (Exception ex) { Log.LogError($"Failed to write to infraction log: {ex.Message}"); }
 		}
 
-        public static void ClearAllPlayerData(uint netId)
+        public static void ClearAllPlayerData(uint netId, ulong steamId)
         {
             ServerRemainingCooldowns.Remove(netId);
             ServerPlayerPositions.Remove(netId);
@@ -284,35 +365,66 @@ namespace HardAntiCheat
             ServerSpeedCheckCooldowns.Remove(netId);
             ServerJumpCheckCooldowns.Remove(netId);
             ServerAirborneCheckCooldowns.Remove(netId);
+
+            if (PendingVerification.TryGetValue(steamId, out var verificationData))
+            {
+                if (Instance != null) Instance.StopCoroutine(verificationData.KickCoroutine);
+                PendingVerification.Remove(steamId);
+            }
+            VerifiedSteamIDs.Remove(steamId);
         }
 	}
     
-    #region Player Spawn & Server Initialization
-	[HarmonyPatch(typeof(PlayerMove), "Start")]
-	public static class PlayerSpawnPatch
-	{
-		private const float GRACE_PERIOD_SECONDS = 3.0f;
+    #region Player Connection & Initialization
+    [HarmonyPatch(typeof(PlayerMove), "Start")]
+    public static class PlayerSpawnPatch
+    {
+        private const float GRACE_PERIOD_SECONDS = 3.0f;
         private static bool hasServerInitialized = false;
 
-		public static void Postfix(PlayerMove __instance)
-		{
-			if (!NetworkServer.active) return;
-            
-            if (!hasServerInitialized)
+        public static void Postfix(PlayerMove __instance)
+        {
+            if (NetworkServer.active)
             {
-                Main.Log.LogInfo("First player has spawned. HardAntiCheat server-side modules are now active and monitoring players.");
-                hasServerInitialized = true;
-            }
+                if (!hasServerInitialized)
+                {
+                    Main.Log.LogInfo("First player has spawned. HardAntiCheat server-side modules are now active.");
+                    hasServerInitialized = true;
+                }
 
-            uint netId = __instance.netId;
-            Main.ServerPlayerGracePeriod[netId] = Time.time + GRACE_PERIOD_SECONDS;
-            if (!Main.ServerPlayerInitialSpeeds.ContainsKey(netId))
-            {
-                Main.ServerPlayerInitialSpeeds[netId] = __instance.Network_movSpeed;
-                Main.Log.LogInfo($"[{netId}] Recorded initial move speed for player: {__instance.Network_movSpeed}");
+                uint netId = __instance.netId;
+                Main.ServerPlayerGracePeriod[netId] = Time.time + GRACE_PERIOD_SECONDS;
+                if (!Main.ServerPlayerInitialSpeeds.ContainsKey(netId))
+                {
+                    Main.ServerPlayerInitialSpeeds[netId] = __instance.Network_movSpeed;
+                }
+                Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = __instance.transform.position, Timestamp = Time.time };
+
+                if (Main.EnableClientVerification.Value)
+                {
+                    Player player = __instance.GetComponent<Player>();
+                    if (player != null && !player.isLocalPlayer && ulong.TryParse(player._steamID, out ulong steamId))
+                    {
+                        if (!Main.PendingVerification.ContainsKey(steamId) && !Main.VerifiedSteamIDs.Contains(steamId))
+                        {
+                            Main.Log.LogInfo($"Player {player._nickname} spawned on server. Sending verification request...");
+                            
+                            string token = Guid.NewGuid().ToString();
+                            var requestPacket = new HAC_HandshakeRequest
+                            {
+                                TargetSteamID = steamId,
+                                ChallengeToken = token
+                            };
+                            CodeTalkerNetwork.SendNetworkPacket(requestPacket);
+
+                            var kickCoroutine = Main.Instance.StartCoroutine(Main.Instance.KickClientAfterDelay(player));
+                            Main.PendingVerification[steamId] = (token, kickCoroutine);
+                        }
+                    }
+                }
             }
-		}
-	}
+        }
+    }
     #endregion
 	
     #region UI Button Watcher
@@ -749,18 +861,40 @@ namespace HardAntiCheat
 	}
     #endregion
 
-    #region Network Connection Cleanup
+    #region Network Connection Management
 	[HarmonyPatch(typeof(AtlyssNetworkManager), "OnServerDisconnect")]
 	public static class PlayerDisconnectPatch
 	{
 		public static void Postfix(NetworkConnectionToClient _conn)
 		{
-			if (_conn?.identity != null)
+			if (_conn != null && _conn.identity != null)
 			{
 				uint netId = _conn.identity.netId;
-                Main.ClearAllPlayerData(netId);
+                if(ulong.TryParse(_conn.identity.GetComponent<Player>()?._steamID, out ulong steamId))
+                {
+                    Main.ClearAllPlayerData(netId, steamId);
+                }
 			}
 		}
 	}
+
+    [HarmonyPatch(typeof(AtlyssNetworkManager), "OnStartServer")]
+    public static class ServerStartPatch
+    {
+        public static void Postfix()
+        {
+            if (Main.EnableClientVerification.Value)
+            {
+                CodeTalkerNetwork.RegisterListener<HAC_HandshakeResponse>(Main.OnServerReceivedHandshakeResponse);
+                Main.Log.LogInfo("HAC Server-side handshake handler registered.");
+
+                if (SteamUser.GetSteamID() is CSteamID steamId && steamId.IsValid())
+                {
+                    Main.VerifiedSteamIDs.Add(steamId.m_SteamID);
+                    Main.Log.LogInfo($"Host (SteamID: {steamId.m_SteamID}) has been automatically verified.");
+                }
+            }
+        }
+    }
     #endregion
 }

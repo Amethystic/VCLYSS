@@ -3,7 +3,7 @@
     <PropertyGroup>
         <Authors>com.HardAntiCheat.sftwre</Authors>
         <Product>HardAntiCheat</Product>
-        <Version>2.1.9</Version>
+        <Version>2.2.0</Version>
         <PackageId>HardAntiCheat</PackageId>
     </PropertyGroup>
 
@@ -47,10 +47,10 @@
         <Reference Include="$(AtlyssManaged)UnityEngine.InputLegacyModule.dll" Private="False"/>
         <Reference Include="$(AtlyssManaged)UnityEngine.TextRenderingModule.dll" Private="False"/>
         
-        <PackageReference Include="Robyn-CodeTalker" Version="1.2.0" Private="False" />
+        <PackageReference Include="Soggy_Pancake-CodeYapper" Version="2.0.0" Private="False" />
         
         <Reference Include="CodeTalker">
-          <HintPath>C:\Users\Richard\AppData\Roaming\com.kesomannen.gale\atlyss\profiles\Default\BepInEx\plugins\Robyn-CodeTalker\CodeTalker.dll</HintPath>
+          <HintPath>C:\Users\Richard\AppData\Roaming\com.kesomannen.gale\atlyss\profiles\Default\BepInEx\plugins\Soggy_Pancake-CodeYapper\CodeTalker.dll</HintPath>
         </Reference>
     </ItemGroup>
 

@@ -170,7 +170,7 @@
           }
         }
       },
-      "Robyn-CodeTalker/1.2.0": {
+      "Soggy_Pancake-CodeYapper/2.0.0": {
         "type": "package",
         "compile": {
           "lib/netstandard2.0/CodeTalker.dll": {}
@@ -905,15 +905,15 @@
         "monomod.utils.nuspec"
       ]
     },
-    "Robyn-CodeTalker/1.2.0": {
-      "sha512": "Ge2ZDC/60uNm1gXIUX1S/B2gawRUFF80EOWSsyXa6xlTb4QqBzClfGIGulSdU0bPcNS19FZufKPRWyIU5y06vA==",
+    "Soggy_Pancake-CodeYapper/2.0.0": {
+      "sha512": "ChSo5sHxSZ28PEadCilgIilK/YeDUFXplqhzdMZQk1WLZ3FLofE/oo0BLURT40WvOOpxTGZluVLPBQbAjsadAw==",
       "type": "package",
-      "path": "robyn-codetalker/1.2.0",
+      "path": "soggy_pancake-codeyapper/2.0.0",
       "files": [
         ".nupkg.metadata",
         "lib/netstandard2.0/CodeTalker.dll",
-        "robyn-codetalker.1.2.0.nupkg.sha512",
-        "robyn-codetalker.nuspec"
+        "soggy_pancake-codeyapper.2.0.0.nupkg.sha512",
+        "soggy_pancake-codeyapper.nuspec"
       ]
     },
     "System.Collections/4.3.0": {
@@ -2802,7 +2802,7 @@
       "BepInEx.Analyzers >= 1.*",
       "BepInEx.AssemblyPublicizer.MSBuild >= 0.4.2",
       "BepInEx.Core >= 5.4.*",
-      "Robyn-CodeTalker >= 1.2.0",
+      "Soggy_Pancake-CodeYapper >= 2.0.0",
       "UnityEngine.Modules >= 2022.3.62"
     ]
   },
@@ -2810,7 +2810,7 @@
     "C:\\Users\\soap\\.nuget\\packages\\": {}
   },
   "project": {
-    "version": "2.1.9",
+    "version": "2.2.0",
     "restore": {
       "projectUniqueName": "D:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\HardAntiCheat.csproj",
       "projectName": "HardAntiCheat",
@@ -2868,9 +2868,9 @@
             "target": "Package",
             "version": "[5.4.*, )"
           },
-          "Robyn-CodeTalker": {
+          "Soggy_Pancake-CodeYapper": {
             "target": "Package",
-            "version": "[1.2.0, )"
+            "version": "[2.0.0, )"
           },
           "UnityEngine.Modules": {
             "suppressParent": "All",

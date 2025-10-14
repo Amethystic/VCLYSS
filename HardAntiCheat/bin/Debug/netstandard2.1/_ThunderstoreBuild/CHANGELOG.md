@@ -3,9 +3,10 @@
 <details><summary>Public Test Updates</summary>
 
 ## Game Update - Public Test Update (Updated each V2 revision/build)
-- Updated to Latest game update - [+] 10/11/25
-- Fixed Detections being missing - [+] 10/11/25
-- Added STEAM:ID Whitelist/Blacklist - [+] 10/12/25
+- Updated to Latest game update - 10/11/25
+- Fixed Detections being missing - 10/11/25
+- Added STEAM:ID Whitelist/Blacklist - 10/12/25
+- Ported Codetalker varients - [+] 10/14/25
 
 ## V2 - Refactory - Public Test Update (cont ^)
 - Fixes "Players getting railed on skill init still" FULLY
