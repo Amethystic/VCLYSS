@@ -28,11 +28,13 @@ These mods are not required dependencies but are confirmed to be compatible and 
 ### General
 
 | **Setting** | **Default** | **Description** |
-| :--- | :---: | :--- |
-| `Enable AntiCheat` | ✅ | Master switch to enable or disable all anti-cheat modules. |
-| `Disable Detections for Host` | ✅ | If true, the player hosting will not be checked. Recommended for admins. |
-| `Trusted SteamIDs` | ✅ | A comma-separated list of 64-bit SteamIDs for users who should be exempt from all anti-cheat checks. |
-| `Max Log File Size (MB)` | 5 | If the infraction log exceeds this size on startup, it will be archived. |
+| :--- |:-----------:| :--- |
+| `Enable AntiCheat` |      ✅      | Master switch to enable or disable all anti-cheat modules. |
+| `Disable Detections for Host` |      ✅      | If true, the player hosting will not be checked. Recommended for admins. |
+| `Trusted SteamIDs` |      ✅      | A comma-separated list of 64-bit SteamIDs for users who should be exempt from all anti-cheat checks. |
+| `Max Log File Size (MB)` |      5      | If the infraction log exceeds this size on startup, it will be archived. |
+| `Enable Client Verification` |      ✅      | If true, kicks players who don't have HardAntiCheat installed. |
+| `Verification Timeout` |     25      | How many seconds the server will wait for a client to verify before kicking them (if Client Verification is enabled). |
 
 ### Movement Detections
 

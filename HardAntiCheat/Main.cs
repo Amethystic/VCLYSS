@@ -115,6 +115,9 @@ namespace HardAntiCheat
 			DisableForHost = Config.Bind("1. General", "Disable Detections for Host", true, "If true, the player hosting the server will not be checked for infractions.");
             TrustedSteamIDs = Config.Bind("1. General", "Trusted SteamIDs", "", "A comma-separated list of 64-bit SteamIDs for users who should be exempt from all anti-cheat checks.");
 			MaxLogFileSizeMB = Config.Bind("1. General", "Max Log File Size (MB)", 5, "If the infraction log exceeds this size, it will be archived on startup.");
+			
+			EnableClientVerification = Config.Bind("1. General", "Enable Client Verification", true, "If true, kicks players who don't have HardAntiCheat installed.");
+			VerificationTimeout = Config.Bind("1. General", "Verification Timeout", 25.0f, "How many seconds the server will wait for a client to verify before kicking them (if Client Verification is enabled).");
 
             EnableMovementChecks = Config.Bind("2. Movement Detections", "Enable Teleport/Distance Checks", true, "Checks the final result of player movement to catch physics-based speed hacks and teleports.");
             MaxEffectiveSpeed = Config.Bind("2. Movement Detections", "Max Effective Speed", 100f, "The maximum plausible speed (units per second) a player can move.");
@@ -143,9 +146,6 @@ namespace HardAntiCheat
             LogPlayerID = Config.Bind("6. Logging", "Log Player ID", true, "Include the player's SteamID/netId in detailed logs.");
             LogInfractionDetails = Config.Bind("6. Logging", "Log Infraction Details", true, "Include the specific reason/details of the infraction in detailed logs.");
             LogInfractionCount = Config.Bind("6. Logging", "Log Infraction Count", true, "Include the player's current warning count in detailed logs.");
-            
-            EnableClientVerification = Config.Bind("7. Testing", "Enable Client Verification", false, "If true, kicks players who don't have HardAntiCheat installed. This can be spoofed by cheaters and may block friends.");
-            VerificationTimeout = Config.Bind("7. Testing", "Verification Timeout", 10.0f, "How many seconds the server will wait for a client to verify before kicking them (if Client Verification is enabled).");
             
             CheckAndArchiveLogFile();
             ParseWhitelist();
