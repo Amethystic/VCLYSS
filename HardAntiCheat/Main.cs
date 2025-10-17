@@ -8,6 +8,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using CodeTalker.Networking;
 using CodeTalker.Packets;
@@ -18,18 +20,22 @@ using UnityEngine.UI;
 
 namespace HardAntiCheat
 {
-    #region Custom Network Packets (CodeYapper)
+    #region Custom Network Packets (CodeYapper) - PATCHED
     public class HAC_HandshakeRequest : PacketBase
     {
         public override string PacketSourceGUID => "HardAntiCheat";
         [JsonProperty] public ulong TargetSteamID;
         [JsonProperty] public string ChallengeToken;
+        // PATCH: Added ChallengeType to instruct the client on what kind of hash to generate.
+        // This makes the system extensible for future integrity checks. 0 = standard DLL hash.
+        [JsonProperty] public int ChallengeType;
     }
 
     public class HAC_HandshakeResponse : PacketBase
     {
         public override string PacketSourceGUID => "HardAntiCheat";
-        [JsonProperty] public string ChallengeToken;
+        // PATCH: Changed from sending the token back to sending a computed hash.
+        [JsonProperty] public string ChallengeHash;
     }
     #endregion
 
@@ -37,6 +43,60 @@ namespace HardAntiCheat
     public struct PlayerPositionData { public Vector3 Position; public float Timestamp; }
 	public struct PlayerStatsData { public int Level; public int Experience; }
 	public struct PlayerAirborneData { public float AirTime; public Vector3 LastGroundedPosition; public int ServerSideJumpCount; public float LastVerticalPosition; public float VerticalStallTime; }
+    #endregion
+
+    #region Integrity Hashing Logic - NEW
+    // NEW: This static class handles the client-side and server-side logic for generating and verifying code integrity hashes.
+    public static class HACIntegrity
+    {
+        private static byte[] _selfHashCache;
+
+        // Computes a hash of this assembly's file bytes.
+        private static byte[] GetSelfHash()
+        {
+            if (_selfHashCache != null) return _selfHashCache;
+            
+            using (var sha256 = SHA256.Create())
+            {
+                using (var stream = File.OpenRead(Assembly.GetExecutingAssembly().Location))
+                {
+                    _selfHashCache = sha256.ComputeHash(stream);
+                    return _selfHashCache;
+                }
+            }
+        }
+
+        // Client-side method to generate the hash response.
+        public static string GenerateClientHash(string token, int type)
+        {
+            if (string.IsNullOrEmpty(token)) return string.Empty;
+
+            try
+            {
+                // This is where different challenge types would be handled. For now, we only have one.
+                switch (type)
+                {
+                    case 0:
+                    default:
+                        byte[] selfHash = GetSelfHash();
+                        byte[] tokenBytes = Encoding.UTF8.GetBytes(token);
+                        byte[] combined = new byte[selfHash.Length + tokenBytes.Length];
+                        Buffer.BlockCopy(selfHash, 0, combined, 0, selfHash.Length);
+                        Buffer.BlockCopy(tokenBytes, 0, combined, selfHash.Length, tokenBytes.Length);
+
+                        using (var sha256 = SHA256.Create())
+                        {
+                            return Convert.ToBase64String(sha256.ComputeHash(combined));
+                        }
+                }
+            }
+            catch
+            {
+                // If hashing fails for any reason, return an invalid hash.
+                return "HASH_GENERATION_FAILED";
+            }
+        }
+    }
     #endregion
 
 	[BepInPlugin(ModInfo.GUID, ModInfo.NAME, ModInfo.VERSION)]
@@ -55,6 +115,8 @@ namespace HardAntiCheat
 		public static ConfigEntry<bool> DisableForHost;
         public static ConfigEntry<string> TrustedSteamIDs;
         public static ConfigEntry<bool> EnableClientVerification;
+        // PATCH: Changed description to reflect new hashing mechanism.
+        public static ConfigEntry<bool> EnableIntegrityChecks;
         public static ConfigEntry<float> VerificationTimeout;
         public static ConfigEntry<int> MaxLogFileSizeMB;
         public static ConfigEntry<bool> EnableMovementChecks;
@@ -70,6 +132,9 @@ namespace HardAntiCheat
 		public static ConfigEntry<bool> EnableExperienceChecks;
 		public static ConfigEntry<int> JumpThreshold;
         public static ConfigEntry<int> MaxPlausibleXPGain;
+        // NEW: Configuration for rate-limiting XP gain.
+        public static ConfigEntry<int> MaxXPGainPerWindow;
+        public static ConfigEntry<float> XPGainWindowSeconds;
 		public static ConfigEntry<bool> EnableCooldownChecks;
 		public static ConfigEntry<bool> EnableReviveChecks;
 		public static ConfigEntry<bool> EnablePunishmentSystem;
@@ -88,6 +153,8 @@ namespace HardAntiCheat
 		public static readonly Dictionary<uint, Dictionary<string, float>> ServerRemainingCooldowns = new Dictionary<uint, Dictionary<string, float>>();
         public static readonly Dictionary<uint, PlayerPositionData> ServerPlayerPositions = new Dictionary<uint, PlayerPositionData>();
 		public static readonly Dictionary<uint, PlayerStatsData> ServerPlayerStats = new Dictionary<uint, PlayerStatsData>();
+        // NEW: Dictionary to track XP gain for rate-limiting. Stores (Timestamp, Amount).
+        public static readonly Dictionary<uint, List<(float Timestamp, int Amount)>> XpGainHistory = new Dictionary<uint, List<(float, int)>>();
 		public static readonly Dictionary<uint, PlayerAirborneData> ServerPlayerAirborneStates = new Dictionary<uint, PlayerAirborneData>();
         public static readonly Dictionary<uint, float> ServerPlayerInitialSpeeds = new Dictionary<uint, float>();
 		public static readonly Dictionary<uint, int> ServerPlayerInfractionCount = new Dictionary<uint, int>();
@@ -99,7 +166,8 @@ namespace HardAntiCheat
         public static readonly Dictionary<uint, float> AuthorizedSelfRevives = new Dictionary<uint, float>();
         
         // --- CLIENT VERIFICATION DICTIONARIES ---
-        internal static readonly Dictionary<ulong, (string Token, Coroutine KickCoroutine)> PendingVerification = new Dictionary<ulong, (string, Coroutine)>();
+        // PATCH: The tuple now stores the expected hash instead of just the token.
+        internal static readonly Dictionary<ulong, (string ExpectedHash, Coroutine KickCoroutine)> PendingVerification = new Dictionary<ulong, (string, Coroutine)>();
         internal static readonly HashSet<ulong> VerifiedSteamIDs = new HashSet<ulong>();
 		
 		private void Awake()
@@ -116,8 +184,9 @@ namespace HardAntiCheat
             TrustedSteamIDs = Config.Bind("1. General", "Trusted SteamIDs", "", "A comma-separated list of 64-bit SteamIDs for users who should be exempt from all anti-cheat checks.");
 			MaxLogFileSizeMB = Config.Bind("1. General", "Max Log File Size (MB)", 5, "If the infraction log exceeds this size, it will be archived on startup.");
 			
-			EnableClientVerification = Config.Bind("1. General", "Enable Client Verification", true, "If true, kicks players who don't have HardAntiCheat installed.");
-			VerificationTimeout = Config.Bind("1. General", "Verification Timeout", 25.0f, "How many seconds the server will wait for a client to verify before kicking them (if Client Verification is enabled).");
+            // PATCH: Replaced simple verification switch with a more descriptive one for the hashing mechanism.
+			EnableIntegrityChecks = Config.Bind("1. General", "Enable Client Integrity Checks", true, "If true, kicks players who fail a cryptographic challenge to prove they have the unmodified mod installed.");
+			VerificationTimeout = Config.Bind("1. General", "Verification Timeout", 25.0f, "How many seconds the server will wait for a client to verify before kicking them.");
 
             EnableMovementChecks = Config.Bind("2. Movement Detections", "Enable Teleport/Distance Checks", true, "Checks the final result of player movement to catch physics-based speed hacks and teleports.");
             MaxEffectiveSpeed = Config.Bind("2. Movement Detections", "Max Effective Speed", 100f, "The maximum plausible speed (units per second) a player can move.");
@@ -131,8 +200,11 @@ namespace HardAntiCheat
             JumpHackDetectionCooldown = Config.Bind("2. Movement Detections", "Jump Hack Detection Cooldown", 2.0f, "How long (in seconds) the anti-cheat will wait before logging another jump stat infraction for the same player.");
             AirborneHackDetectionCooldown = Config.Bind("2. Movement Detections", "Airborne Hack Detection Cooldown", 10.0f, "How long (in seconds) the anti-cheat will wait before logging another airborne infraction for the same player.");
 
-			EnableExperienceChecks = Config.Bind("3. Stat Detections", "Enable Experience/Level Checks", true, "Prevents players from gaining huge amounts of XP or multiple levels at once based on the 'Max Plausible XP Gain' limit.");
-            MaxPlausibleXPGain = Config.Bind("3. Stat Detections", "Max Plausible XP Gain", 77000, "The maximum amount of XP a player can gain in a single transaction.");
+			EnableExperienceChecks = Config.Bind("3. Stat Detections", "Enable Experience/Level Checks", true, "Prevents players from gaining huge amounts of XP or multiple levels at once.");
+            MaxPlausibleXPGain = Config.Bind("3. Stat Detections", "Max Plausible XP Gain (Single Transaction)", 77000, "The maximum amount of XP a player can gain in a single transaction.");
+            // NEW: Config for rate limiting.
+            MaxXPGainPerWindow = Config.Bind("3. Stat Detections", "Max XP Gain Rate", 150000, "The maximum amount of XP a player can gain within the time window specified below.");
+            XPGainWindowSeconds = Config.Bind("3. Stat Detections", "XP Gain Time Window (Seconds)", 30f, "The time window for the XP gain rate limit.");
 
 			EnableCooldownChecks = Config.Bind("4. Combat Detections", "Enable Skill Cooldown Checks", true, "Silently enforces server-side cooldowns, blocking premature skill usage.");
 			EnableReviveChecks = Config.Bind("4. Combat Detections", "Enable Self-Revive Checks", true, "Prevents players from reviving themselves while dead.");
@@ -158,18 +230,21 @@ namespace HardAntiCheat
 			Log.LogInfo($"[{ModInfo.NAME}] has been loaded. Infractions will be logged to: {InfractionLogPath}");
 		}
         
+        // PATCH: Client now computes and sends a hash instead of the token.
         public static void OnClientReceivedHandshakeRequest(PacketHeader header, PacketBase packet)
         {
             if (packet is HAC_HandshakeRequest request)
             {
                 if (ulong.TryParse(Player._mainPlayer?._steamID, out ulong mySteamId) && request.TargetSteamID == mySteamId)
                 {
-                    Log.LogInfo("Received verification request from server. Sending response...");
-                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HandshakeResponse { ChallengeToken = request.ChallengeToken });
+                    Log.LogInfo("Received verification request from server. Computing integrity hash...");
+                    string clientHash = HACIntegrity.GenerateClientHash(request.ChallengeToken, request.ChallengeType);
+                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HandshakeResponse { ChallengeHash = clientHash });
                 }
             }
         }
 
+        // PATCH: Server now validates the received hash against its expected hash.
         public static void OnServerReceivedHandshakeResponse(PacketHeader header, PacketBase packet)
         {
             if (packet is HAC_HandshakeResponse response)
@@ -177,12 +252,17 @@ namespace HardAntiCheat
                 ulong senderSteamId = header.SenderID;
                 if (PendingVerification.TryGetValue(senderSteamId, out var verificationData))
                 {
-                    if (verificationData.Token == response.ChallengeToken)
+                    if (verificationData.ExpectedHash == response.ChallengeHash)
                     {
                         Instance.StopCoroutine(verificationData.KickCoroutine);
                         PendingVerification.Remove(senderSteamId);
                         VerifiedSteamIDs.Add(senderSteamId);
-                        Log.LogInfo($"SteamID {senderSteamId} has been successfully verified.");
+                        Log.LogInfo($"SteamID {senderSteamId} has been successfully verified (Integrity check passed).");
+                    }
+                    else
+                    {
+                        // The hash was incorrect, log it and let the kick coroutine handle the rest.
+                        Log.LogWarning($"SteamID {senderSteamId} failed integrity check. Expected hash did not match received hash.");
                     }
                 }
             }
@@ -196,7 +276,7 @@ namespace HardAntiCheat
 
             if (player != null && !VerifiedSteamIDs.Contains(steamId))
             {
-                Log.LogWarning($"Disconnecting player {player._nickname} (SteamID: {steamId}) for failing to verify presence of HAC.");
+                Log.LogWarning($"Disconnecting player {player._nickname} (SteamID: {steamId}) for failing client integrity check.");
                 player.connectionToClient.Disconnect();
             }
             PendingVerification.Remove(steamId);
@@ -357,6 +437,7 @@ namespace HardAntiCheat
             ServerRemainingCooldowns.Remove(netId);
             ServerPlayerPositions.Remove(netId);
             ServerPlayerStats.Remove(netId);
+            XpGainHistory.Remove(netId); // NEW: Clear XP history on disconnect.
             ServerPlayerAirborneStates.Remove(netId);
             ServerPlayerInitialSpeeds.Remove(netId);
             ServerPlayerInfractionCount.Remove(netId);
@@ -400,25 +481,33 @@ namespace HardAntiCheat
                 }
                 Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = __instance.transform.position, Timestamp = Time.time };
 
-                if (Main.EnableClientVerification.Value)
+                // PATCH: This logic is now governed by the EnableIntegrityChecks config.
+                if (Main.EnableIntegrityChecks.Value)
                 {
                     Player player = __instance.GetComponent<Player>();
                     if (player != null && !player.isLocalPlayer && ulong.TryParse(player._steamID, out ulong steamId))
                     {
                         if (!Main.PendingVerification.ContainsKey(steamId) && !Main.VerifiedSteamIDs.Contains(steamId))
                         {
-                            Main.Log.LogInfo($"Player {player._nickname} spawned on server. Sending verification request...");
+                            Main.Log.LogInfo($"Player {player._nickname} spawned on server. Sending integrity challenge...");
                             
                             string token = Guid.NewGuid().ToString();
+                            int challengeType = 0; // Standard DLL hash check
+                            
+                            // Server computes the hash it expects the client to return.
+                            string expectedHash = HACIntegrity.GenerateClientHash(token, challengeType);
+
                             var requestPacket = new HAC_HandshakeRequest
                             {
                                 TargetSteamID = steamId,
-                                ChallengeToken = token
+                                ChallengeToken = token,
+                                ChallengeType = challengeType
                             };
                             CodeTalkerNetwork.SendNetworkPacket(requestPacket);
 
                             var kickCoroutine = Main.Instance.StartCoroutine(Main.Instance.KickClientAfterDelay(player));
-                            Main.PendingVerification[steamId] = (token, kickCoroutine);
+                            // Store the expected hash, not the token.
+                            Main.PendingVerification[steamId] = (expectedHash, kickCoroutine);
                         }
                     }
                 }
@@ -614,7 +703,7 @@ namespace HardAntiCheat
                 {
                     if (Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float initialSpeed))
                     {
-                        if (__instance._movSpeed > Main.MaxEffectiveSpeed.Value)
+                        if (__instance._movSpeed > initialSpeed * 1.5f) // Allow for some buffer
                         {
                             Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance._movSpeed}. Reverting to initial speed of {initialSpeed}.");
                             __instance.Reset_MoveSpeed();
@@ -639,11 +728,17 @@ namespace HardAntiCheat
                         if (timeElapsed > Main.MovementTimeThreshold.Value)
                         {
                             float distanceTraveled = Vector3.Distance(lastPositionData.Position, currentPosition);
-                            float maxPossibleDistance = (Main.MaxEffectiveSpeed.Value * timeElapsed) + Main.MovementGraceBuffer.Value;
+                            
+                            // PATCH: Dynamic speed calculation.
+                            // Instead of a single max speed, we use the player's server-verified speed stat.
+                            // This catches "smooth" speed hacks more effectively.
+                            float serverSideMoveSpeed = Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float speed) ? speed : 50f; // Use initial speed as the baseline.
+                            float maxPossibleDistance = (serverSideMoveSpeed * 1.5f * timeElapsed) + Main.MovementGraceBuffer.Value; // 1.5f multiplier for buffs/sprinting
+                            
                             if (distanceTraveled > maxPossibleDistance)
                             {
-                                string cheatType = distanceTraveled > Main.TeleportDistanceThreshold.Value ? "Movement Hack (Teleport)" : "Movement Hack (Speed)";
-                                string details = $"Moved {distanceTraveled:F1} units in {timeElapsed:F2}s. Reverting position.";
+                                string cheatType = distanceTraveled > Main.TeleportDistanceThreshold.Value ? "Movement Hack (Teleport)" : "Movement Hack (Speed Mismatch)";
+                                string details = $"Moved {distanceTraveled:F1} units in {timeElapsed:F2}s (Expected max: {maxPossibleDistance:F1}). Reverting position.";
 
                                 foreach (var conn in NetworkServer.connections.Values)
                                 {
@@ -676,7 +771,7 @@ namespace HardAntiCheat
                 {
                     if (__instance._maxJumps >= Main.JumpThreshold.Value)
                     {
-	                    Main.LogInfraction(__instance, "Stat Manipulation (Overboarded Jumps)", $"Client reported _maxJumps of {__instance._maxJumps}. Reverting to {Main.JumpThreshold.Value}.");
+	                    Main.LogInfraction(__instance, "Stat Manipulation (Overboarded Jumps)", $"Client reported _maxJumps of {__instance._maxJumps}. Reverting to 2.");
 	                    __instance._maxJumps = 2;
 	                    Main.ServerJumpCheckCooldowns[netId] = Time.time + Main.JumpHackDetectionCooldown.Value;
                     }
@@ -756,17 +851,65 @@ namespace HardAntiCheat
 			}
 			int oldExperience = stat.Experience;
 			int experienceGain = value - oldExperience;
+            
+            // Ignore XP loss
+            if (experienceGain <= 0)
+            {
+                PlayerStatsData currentStatsOnLoss = Main.ServerPlayerStats[netId];
+                currentStatsOnLoss.Experience = value;
+                Main.ServerPlayerStats[netId] = currentStatsOnLoss;
+                return true;
+            }
 
+            // PATCH: Check both single transaction limit and rate limit.
 			if (experienceGain > Main.MaxPlausibleXPGain.Value)
 			{
-				Main.LogInfraction(__instance, "Stat Manipulation (Experience)", $"Attempted to gain {experienceGain} XP at once. Blocked.");
+				Main.LogInfraction(__instance, "Stat Manipulation (Experience)", $"Attempted to gain {experienceGain} XP at once (Limit: {Main.MaxPlausibleXPGain.Value}). Blocked.");
 				value = oldExperience;
+                return false;
 			}
+            
+            // NEW: Rate limit check.
+            if (IsXpGainRateExceeded(netId, experienceGain))
+            {
+                Main.LogInfraction(__instance, "Stat Manipulation (XP Rate)", $"Attempted to gain XP too quickly. Blocked.");
+                value = oldExperience;
+                return false;
+            }
+
 			PlayerStatsData currentStats = Main.ServerPlayerStats[netId];
 			currentStats.Experience = value;
 			Main.ServerPlayerStats[netId] = currentStats;
 			return true;
 		}
+
+        // NEW: Helper function to manage and check XP gain rate.
+        private static bool IsXpGainRateExceeded(uint netId, int gain)
+        {
+            if (!Main.XpGainHistory.ContainsKey(netId))
+            {
+                Main.XpGainHistory[netId] = new List<(float Timestamp, int Amount)>();
+            }
+
+            var history = Main.XpGainHistory[netId];
+            float currentTime = Time.time;
+            float window = Main.XPGainWindowSeconds.Value;
+
+            // Remove old entries from history.
+            history.RemoveAll(entry => currentTime - entry.Timestamp > window);
+
+            // Check if the new gain would exceed the limit.
+            int sumInWindow = history.Sum(entry => entry.Amount);
+            if (sumInWindow + gain > Main.MaxXPGainPerWindow.Value)
+            {
+                return true; // Rate exceeded.
+            }
+            
+            // Add the new gain to history.
+            history.Add((currentTime, gain));
+            return false; // Rate is acceptable.
+        }
+
 		[HarmonyPatch(typeof(PlayerStats), "set_Network_currentLevel")]
 		[HarmonyPrefix]
 		public static bool ValidateLevelChange(PlayerStats __instance, ref int value)
@@ -883,10 +1026,11 @@ namespace HardAntiCheat
     {
         public static void Postfix()
         {
-            if (Main.EnableClientVerification.Value)
+            // PATCH: Logic now governed by EnableIntegrityChecks config.
+            if (Main.EnableIntegrityChecks.Value)
             {
                 CodeTalkerNetwork.RegisterListener<HAC_HandshakeResponse>(Main.OnServerReceivedHandshakeResponse);
-                Main.Log.LogInfo("HAC Server-side handshake handler registered.");
+                Main.Log.LogInfo("HAC Server-side integrity check handler registered.");
 
                 if (SteamUser.GetSteamID() is CSteamID steamId && steamId.IsValid())
                 {

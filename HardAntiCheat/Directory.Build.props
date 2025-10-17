@@ -12,7 +12,7 @@
         <ThunderstorePackageName>HardAntiCheat</ThunderstorePackageName>
         <ThunderstoreTeamName>s0apy</ThunderstoreTeamName>
         <ThunderstorePackageDescription>Anti-cheat plugin for Atlyss multiplayer. (In Public Testing)</ThunderstorePackageDescription>
-        <ThunderstoreWebsite>https://store.steampowered.com/app/2768430/ATLYSS/</ThunderstoreWebsite>
+        <ThunderstoreWebsite>https://discord.gg/HgMtdpXYud</ThunderstoreWebsite>
     </PropertyGroup>
     <ItemGroup>
         <!-- Thunderstore dependency strings -->
