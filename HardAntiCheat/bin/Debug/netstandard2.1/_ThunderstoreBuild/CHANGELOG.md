@@ -8,7 +8,8 @@
 - Added STEAM:ID Whitelist/Blacklist - 10/12/25
 - Ported Codetalker varients - 10/14/25
 - Extended verification length - 10/14/25
-- Anticheat Integ Check Addition to minimize chances of bypassing - [+] 10/17/25
+- Anticheat Integ Check Addition to minimize chances of bypassing - 10/17/25
+- Game update [+] 10/21/25
 
 ## V2 - Refactory - Public Test Update (cont ^)
 - Fixes "Players getting railed on skill init still" FULLY

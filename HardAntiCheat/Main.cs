@@ -583,12 +583,13 @@ namespace HardAntiCheat
 	{
 		[HarmonyPatch(typeof(StatusEntity), "Cmd_RevivePlayer")]
 		[HarmonyPrefix]
-		public static bool ValidateRevive(StatusEntity __instance, Player _p)
+		public static bool ValidateRevive(StatusEntity __instance, StatusEntity _statusEntity)
 		{
 			if (!NetworkServer.active || !Main.EnableAntiCheat.Value || !Main.EnableReviveChecks.Value) return true;
-			if (Main.IsPlayerExempt(_p)) return true;
-
-			if (__instance.netId == _p.netId)
+			Player playerToRevive = _statusEntity.GetComponent<Player>();
+			if (playerToRevive == null) return true; 
+			if (Main.IsPlayerExempt(playerToRevive)) return true;
+			if (__instance.netId == _statusEntity.netId)
 			{
 				Main.LogInfraction(__instance, "Unauthorized Action (Direct Self-Revive)", "Blocked direct call to self-revive.");
 				return false;
