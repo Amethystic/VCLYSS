@@ -74,13 +74,6 @@ Example:
 <details><summary>Silent Updates</summary>
 
 ## Shh, these are silent updates - just fixes and stuff (Some might not be on here)
-- New logo
-- Tinker Tappers
-- shh CHANGELOG.md incident (x2)
-- scraped damage idea
-- Improved Auto Kicking/Banning
-- Scrapped TanukiUtil Mod Detection (Had better ideas)
-- quick patch so silent update from 2.1.4
-- a dew bugfixes im starting to now put dates on when the updates happened starting now - [+] 9/27/25
+- Cleaned for this update - [~] 10/29/25
 
 </details>
