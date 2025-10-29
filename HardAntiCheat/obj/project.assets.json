@@ -2811,7 +2811,7 @@
     "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages": {}
   },
   "project": {
-    "version": "2.2.2",
+    "version": "2.2.3",
     "restore": {
       "projectUniqueName": "D:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\HardAntiCheat.csproj",
       "projectName": "HardAntiCheat",
