@@ -8,10 +8,10 @@
 - Added STEAM:ID Whitelist/Blacklist - 10/12/25
 - Ported Codetalker varients - 10/14/25
 - Extended verification length - 10/14/25
-- Anticheat Integ Check Addition to minimize chances of bypassing - 10/17/25
+- Anticheat Integ Check Addition to minimize chances of bypassing
 - Game update
-- Added Mod Validation/Configurations (LIVE TESTING) [+] 10/29/25
-- Patched FluffUtilities (LIVE TESTING) [+] 10/29/25
+- Added Mod Validation/Configurations (LIVE TESTING) [~] 10/29/25
+- Added s0apy-PerfectAnti-1.1.0 as a dependency - [+] 11/4/25
 
 ## V2 - Refactory - Public Test Update (cont ^)
 - Fixes "Players getting railed on skill init still" FULLY
@@ -75,5 +75,6 @@ Example:
 
 ## Shh, these are silent updates - just fixes and stuff (Some might not be on here)
 - Cleaned for this update - [~] 10/29/25
+- All related configuration options and the server-side Steamworks lobby check have been excised. The anti-cheat system now relies solely on the other established detection methods, including the client integrity hash and the BepInEx mod list handshake. - [+] 10/29/25
 
 </details>

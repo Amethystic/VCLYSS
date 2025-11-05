@@ -8,17 +8,17 @@
 - Added STEAM:ID Whitelist/Blacklist - 10/12/25
 - Ported Codetalker varients - 10/14/25
 - Extended verification length - 10/14/25
-- Anticheat Integ Check Addition to minimize chances of bypassing - 10/17/25
+- Anticheat Integ Check Addition to minimize chances of bypassing
 - Game update
-- Added Mod Validation/Configurations (LIVE TESTING) [+] 10/29/25
-- Patched FluffUtilities (LIVE TESTING) [+] 10/29/25
+- Added Mod Validation/Configurations (LIVE TESTING) [~] 10/29/25
+- Added s0apy-PerfectAnti-1.1.0 as a dependency - [+] 11/4/25
 
 ## V2 - Refactory - Public Test Update (cont ^)
 - Fixes "Players getting railed on skill init still" FULLY
-- Fixed fly/movement checks - [~] 9/27/25
+- Fixed fly/movement checks
 - Fixed host bool issue
 - Added logging choices depending on user choice
-- Patched Teleportation by call - [~] 9/27/25
+- Patched Teleportation by call
 - Updated Readme (Vx.x.1)
 - Canofwhoopass Bugfix (Thx homebrewery)
 - Airborne Height limiting check (Allows you to fly within the height limit)
@@ -26,7 +26,7 @@
 - Fixed Revive detection logic
 - Added Currency Add Check back (Yes i removed it in past versions)
 - Added Codetalker Anticheat Syncing (Optional)
-- Improved Teleportation Check - [~] 9/27/25
+- Improved Teleportation Check
 - Fixed Verification Handling
 
 - In-Game Logical Actions fixes
@@ -74,13 +74,7 @@ Example:
 <details><summary>Silent Updates</summary>
 
 ## Shh, these are silent updates - just fixes and stuff (Some might not be on here)
-- New logo
-- Tinker Tappers
-- shh CHANGELOG.md incident (x2)
-- scraped damage idea
-- Improved Auto Kicking/Banning
-- Scrapped TanukiUtil Mod Detection (Had better ideas)
-- quick patch so silent update from 2.1.4
-- a dew bugfixes im starting to now put dates on when the updates happened starting now - [+] 9/27/25
+- Cleaned for this update - [~] 10/29/25
+- All related configuration options and the server-side Steamworks lobby check have been excised. The anti-cheat system now relies solely on the other established detection methods, including the client integrity hash and the BepInEx mod list handshake. - [+] 10/29/25
 
 </details>

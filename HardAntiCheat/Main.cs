@@ -21,81 +21,101 @@ using UnityEngine.UI;
 
 namespace HardAntiCheat
 {
-    #region Custom Network Packets (CodeYapper) - PATCHED
+    #region Custom Network Packets - UPGRADED
     public class HAC_HandshakeRequest : PacketBase
     {
         public override string PacketSourceGUID => "HardAntiCheat";
         [JsonProperty] public ulong TargetSteamID;
         [JsonProperty] public string ChallengeToken;
-        // PATCH: Added ChallengeType to instruct the client on what kind of hash to generate.
-        // This makes the system extensible for future integrity checks. 0 = standard DLL hash.
         [JsonProperty] public int ChallengeType;
     }
 
     public class HAC_HandshakeResponse : PacketBase
     {
         public override string PacketSourceGUID => "HardAntiCheat";
-        // PATCH: Changed from sending the token back to sending a computed hash.
         [JsonProperty] public string ChallengeHash;
-        // NEW: Added the client's loaded mod list to the handshake for server-side validation.
         [JsonProperty] public List<string> ModList;
+    }
+    
+    // NEW: Packets for the periodic re-verification heartbeat.
+    public class HAC_HeartbeatRequest : PacketBase
+    {
+        public override string PacketSourceGUID => "HardAntiCheat";
+        [JsonProperty] public ulong TargetSteamID; // FIX: Added target ID for broadcast routing
+        [JsonProperty] public string ChallengeToken;
+    }
+
+    public class HAC_HeartbeatResponse : PacketBase
+    {
+        public override string PacketSourceGUID => "HardAntiCheat";
+        [JsonProperty] public string ChallengeHash;
     }
     #endregion
 
-    #region Data Structures
+    #region Data Structures - UPGRADED
     public struct PlayerPositionData { public Vector3 Position; public float Timestamp; }
 	public struct PlayerStatsData { public int Level; public int Experience; }
 	public struct PlayerAirborneData { public float AirTime; public Vector3 LastGroundedPosition; public int ServerSideJumpCount; public float LastVerticalPosition; public float VerticalStallTime; }
+    // NEW: Structure to hold movement statistics for behavioral analysis.
+    public struct PlayerMovementStats { public List<float> RecentSpeeds; public float TimeAtMaxSpeed; }
     #endregion
 
-    #region Integrity Hashing Logic - NEW
-    // NEW: This static class handles the client-side and server-side logic for generating and verifying code integrity hashes.
+    #region Integrity Hashing Logic - UPGRADED
     public static class HACIntegrity
     {
-        private static byte[] _selfHashCache;
-
-        // Computes a hash of this assembly's file bytes.
-        private static byte[] GetSelfHash()
-        {
-            if (_selfHashCache != null) return _selfHashCache;
-            
-            using (var sha256 = SHA256.Create())
-            {
-                using (var stream = File.OpenRead(Assembly.GetExecutingAssembly().Location))
-                {
-                    _selfHashCache = sha256.ComputeHash(stream);
-                    return _selfHashCache;
-                }
-            }
-        }
-
-        // Client-side method to generate the hash response.
-        public static string GenerateClientHash(string token, int type)
+        // UPGRADED: Now generates a composite hash from multiple critical files and data points.
+        public static string GenerateClientCompositeHash(string token, List<string> modList)
         {
             if (string.IsNullOrEmpty(token)) return string.Empty;
 
             try
             {
-                // This is where different challenge types would be handled. For now, we only have one.
-                switch (type)
+                using (var sha256 = SHA256.Create())
                 {
-                    case 0:
-                    default:
-                        byte[] selfHash = GetSelfHash();
-                        byte[] tokenBytes = Encoding.UTF8.GetBytes(token);
-                        byte[] combined = new byte[selfHash.Length + tokenBytes.Length];
-                        Buffer.BlockCopy(selfHash, 0, combined, 0, selfHash.Length);
-                        Buffer.BlockCopy(tokenBytes, 0, combined, selfHash.Length, tokenBytes.Length);
+                    using (var memoryStream = new MemoryStream())
+                    {
+                        // 1. Hash this mod's DLL
+                        byte[] selfHash = File.ReadAllBytes(Assembly.GetExecutingAssembly().Location);
+                        memoryStream.Write(selfHash, 0, selfHash.Length);
 
-                        using (var sha256 = SHA256.Create())
+                        // 2. Hash core BepInEx and game files
+                        string bepInExRoot = Paths.BepInExRootPath;
+                        string[] filesToHash = {
+                            Path.Combine(bepInExRoot, "core", "BepInEx.dll"),
+                            Path.Combine(bepInExRoot, "core", "0Harmony.dll"),
+                            Path.Combine(Paths.ManagedPath, "Assembly-CSharp.dll")
+                        };
+
+                        foreach (var file in filesToHash)
                         {
-                            return Convert.ToBase64String(sha256.ComputeHash(combined));
+                            if (File.Exists(file))
+                            {
+                                byte[] fileBytes = File.ReadAllBytes(file);
+                                memoryStream.Write(fileBytes, 0, fileBytes.Length);
+                            }
                         }
+
+                        // 3. Hash the mod list itself
+                        if (modList != null)
+                        {
+                            string modListString = string.Join(",", modList.OrderBy(g => g));
+                            byte[] modListBytes = Encoding.UTF8.GetBytes(modListString);
+                            memoryStream.Write(modListBytes, 0, modListBytes.Length);
+                        }
+
+                        // 4. Hash the server's challenge token
+                        byte[] tokenBytes = Encoding.UTF8.GetBytes(token);
+                        memoryStream.Write(tokenBytes, 0, tokenBytes.Length);
+                        
+                        // Compute the final hash from the combined stream
+                        memoryStream.Position = 0;
+                        return Convert.ToBase64String(sha256.ComputeHash(memoryStream));
+                    }
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // If hashing fails for any reason, return an invalid hash.
+                Main.Log.LogError($"Hash generation failed: {ex.Message}");
                 return "HASH_GENERATION_FAILED";
             }
         }
@@ -117,8 +137,10 @@ namespace HardAntiCheat
 		public static ConfigEntry<bool> EnableAntiCheat;
 		public static ConfigEntry<bool> DisableForHost;
         public static ConfigEntry<string> TrustedSteamIDs;
-        // PATCH: Changed description to reflect new hashing mechanism.
         public static ConfigEntry<bool> EnableIntegrityChecks;
+        // NEW: Configuration for the heartbeat re-verification system.
+        public static ConfigEntry<bool> EnableHeartbeatCheck;
+        public static ConfigEntry<float> HeartbeatInterval;
         public static ConfigEntry<bool> HACEnforce;
         public static ConfigEntry<string> HACListType;
         public static ConfigEntry<string> HACHandshakeFailAction;
@@ -150,9 +172,6 @@ namespace HardAntiCheat
         public static ConfigEntry<bool> LogPlayerID;
         public static ConfigEntry<bool> LogInfractionCount;
         public static ConfigEntry<bool> LogInfractionDetails;
-        // NEW: Configuration for specific mod detections.
-        public static ConfigEntry<bool> EnableFluffUtilitiesCheck;
-        public static ConfigEntry<string> FluffUtilitiesAction;
 
 		// --- WHITELIST & MOD LISTS ---
         private static readonly HashSet<ulong> WhitelistedUsers = new HashSet<ulong>();
@@ -165,6 +184,9 @@ namespace HardAntiCheat
         public static readonly Dictionary<uint, List<(float Timestamp, int Amount)>> XpGainHistory = new Dictionary<uint, List<(float, int)>>();
 		public static readonly Dictionary<uint, PlayerAirborneData> ServerPlayerAirborneStates = new Dictionary<uint, PlayerAirborneData>();
         public static readonly Dictionary<uint, float> ServerPlayerInitialSpeeds = new Dictionary<uint, float>();
+        // NEW: Dictionaries for advanced detections.
+        public static readonly Dictionary<uint, PlayerMovementStats> ServerPlayerMovementStats = new Dictionary<uint, PlayerMovementStats>();
+        public static readonly Dictionary<uint, float> ServerPlayerMovementTimers = new Dictionary<uint, float>(); // FIX: For storing per-player timers.
 		public static readonly Dictionary<uint, int> ServerPlayerInfractionCount = new Dictionary<uint, int>();
 		public static readonly Dictionary<uint, float> ServerPlayerGracePeriod = new Dictionary<uint, float>();
         public static readonly Dictionary<uint, float> ServerPunishmentCooldown = new Dictionary<uint, float>();
@@ -175,6 +197,8 @@ namespace HardAntiCheat
         
         // --- CLIENT VERIFICATION DICTIONARIES ---
         internal static readonly Dictionary<ulong, (string ExpectedHash, Coroutine KickCoroutine)> PendingVerification = new Dictionary<ulong, (string, Coroutine)>();
+        // NEW: Dictionary for tracking pending heartbeat responses.
+        internal static readonly Dictionary<ulong, string> PendingHeartbeats = new Dictionary<ulong, string>();
         internal static readonly HashSet<ulong> VerifiedSteamIDs = new HashSet<ulong>();
 		
 		private void Awake()
@@ -194,6 +218,10 @@ namespace HardAntiCheat
 			EnableIntegrityChecks = Config.Bind("1. General", "Enable Client Integrity Checks", true, "If true, kicks players who fail a cryptographic challenge to prove they have the unmodified mod installed.");
 			VerificationTimeout = Config.Bind("1. General", "Verification Timeout", 25.0f, "How many seconds the server will wait for a client to verify before kicking them.");
             
+            // NEW: Heartbeat configuration
+            EnableHeartbeatCheck = Config.Bind("1. General", "Enable Heartbeat Re-Verification", true, "Periodically re-challenges connected clients to ensure they remain unmodified.");
+            HeartbeatInterval = Config.Bind("1. General", "Heartbeat Interval (Seconds)", 45.0f, "How often to send a heartbeat check to clients. Higher is less intrusive, lower is more secure.");
+
             HACEnforce = Config.Bind("1. General", "Enable Mod List Enforcement", false, "If true, the server will check connecting clients' mod lists against the rules below.");
             HACListType = Config.Bind("1. General", "Mod List Type", "blacklist", new ConfigDescription("Determines how the mod list is used.", new AcceptableValueList<string>("blacklist", "whitelist")));
             HACHandshakeFailAction = Config.Bind("1. General", "Handshake Fail Action", "kick", new ConfigDescription("The action to take if a client fails the integrity check or mod list check.", new AcceptableValueList<string>("kick", "ban")));
@@ -229,32 +257,33 @@ namespace HardAntiCheat
             LogInfractionDetails = Config.Bind("6. Logging", "Log Infraction Details", true, "Include the specific reason/details of the infraction in detailed logs.");
             LogInfractionCount = Config.Bind("6. Logging", "Log Infraction Count", true, "Include the player's current warning count in detailed logs.");
             
-            // NEW: Bindings for the FluffUtilities check.
-            EnableFluffUtilitiesCheck = Config.Bind("7. Specific Mod Detections", "Enable FluffUtilities Check", true, "Enables a specific check for the FluffUtilities mod using Steam lobby data.");
-            FluffUtilitiesAction = Config.Bind("7. Specific Mod Detections", "FluffUtilities Detected Action", "Log", new ConfigDescription("Action to take when FluffUtilities is detected.", new AcceptableValueList<string>("Log", "Kick", "Ban")));
-            
             CheckAndArchiveLogFile();
             ParseWhitelist();
             ParseHACModList();
             TrustedSteamIDs.SettingChanged += (s, e) => ParseWhitelist();
             HACModList.SettingChanged += (s, e) => ParseHACModList();
 
+            // Register all network listeners
             CodeTalkerNetwork.RegisterListener<HAC_HandshakeRequest>(OnClientReceivedHandshakeRequest);
             CodeTalkerNetwork.RegisterListener<HAC_HandshakeResponse>(OnServerReceivedHandshakeResponse);
+            CodeTalkerNetwork.RegisterListener<HAC_HeartbeatRequest>(OnClientReceivedHeartbeatRequest);
+            CodeTalkerNetwork.RegisterListener<HAC_HeartbeatResponse>(OnServerReceivedHeartbeatResponse);
             
 			harmony.PatchAll();
 			Log.LogInfo($"[{ModInfo.NAME}] has been loaded. Infractions will be logged to: {InfractionLogPath}");
 		}
         
+        // --- UPGRADED HANDSHAKE AND NEW HEARTBEAT LOGIC ---
+
         public static void OnClientReceivedHandshakeRequest(PacketHeader header, PacketBase packet)
         {
             if (packet is HAC_HandshakeRequest request)
             {
                 if (ulong.TryParse(Player._mainPlayer?._steamID, out ulong mySteamId) && request.TargetSteamID == mySteamId)
                 {
-                    Log.LogInfo("Received verification request from server. Computing integrity hash and gathering mod list...");
-                    string clientHash = HACIntegrity.GenerateClientHash(request.ChallengeToken, request.ChallengeType);
+                    Log.LogInfo("Received verification request from server. Computing composite integrity hash...");
                     var modList = Chainloader.PluginInfos.Keys.ToList();
+                    string clientHash = HACIntegrity.GenerateClientCompositeHash(request.ChallengeToken, modList);
                     CodeTalkerNetwork.SendNetworkPacket(new HAC_HandshakeResponse { ChallengeHash = clientHash, ModList = modList });
                 }
             }
@@ -307,6 +336,11 @@ namespace HardAntiCheat
                         PendingVerification.Remove(senderSteamId);
                         VerifiedSteamIDs.Add(senderSteamId);
                         Log.LogInfo($"SteamID {senderSteamId} has been successfully verified (Integrity and Mod List checks passed).");
+                        // NEW: If heartbeats are enabled, start the coroutine for this player.
+                        if (EnableHeartbeatCheck.Value)
+                        {
+                            Instance.StartCoroutine(Instance.HeartbeatCoroutine(senderSteamId));
+                        }
                     }
                     else
                     {
@@ -316,6 +350,79 @@ namespace HardAntiCheat
                     }
                 }
             }
+        }
+
+        // NEW: Client receives a heartbeat check and responds with a new hash.
+        public static void OnClientReceivedHeartbeatRequest(PacketHeader header, PacketBase packet)
+        {
+            if (packet is HAC_HeartbeatRequest request)
+            {
+                // FIX: Client must check if the broadcasted heartbeat is for them.
+                if (ulong.TryParse(Player._mainPlayer?._steamID, out ulong mySteamId) && request.TargetSteamID == mySteamId)
+                {
+                    var modList = Chainloader.PluginInfos.Keys.ToList();
+                    string clientHash = HACIntegrity.GenerateClientCompositeHash(request.ChallengeToken, modList);
+                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HeartbeatResponse { ChallengeHash = clientHash });
+                }
+            }
+        }
+        
+        // NEW: Server receives a heartbeat response and validates it.
+        public static void OnServerReceivedHeartbeatResponse(PacketHeader header, PacketBase packet)
+        {
+            if (packet is HAC_HeartbeatResponse response)
+            {
+                ulong senderSteamId = header.SenderID;
+                if (PendingHeartbeats.TryGetValue(senderSteamId, out string expectedHash))
+                {
+                    if (expectedHash != response.ChallengeHash)
+                    {
+                        PunishHandshakeFailure(senderSteamId, "Failed heartbeat re-verification.");
+                    }
+                    // If the hash is correct, we simply remove it. The absence of an entry means they are clear.
+                    PendingHeartbeats.Remove(senderSteamId);
+                }
+            }
+        }
+        
+        // NEW: Coroutine to manage sending periodic heartbeats to a specific client.
+        private IEnumerator HeartbeatCoroutine(ulong steamId)
+        {
+            // Wait a bit before the first check.
+            yield return new WaitForSeconds(HeartbeatInterval.Value);
+
+            while (VerifiedSteamIDs.Contains(steamId))
+            {
+                // If the player is still connected...
+                Player player = GetPlayerBySteamID(steamId);
+                if (player != null)
+                {
+                    // If they already have a pending heartbeat they haven't answered, they fail.
+                    if (PendingHeartbeats.ContainsKey(steamId))
+                    {
+                        PunishHandshakeFailure(steamId, "Did not respond to previous heartbeat in time.");
+                        yield break; // End the coroutine for this player.
+                    }
+                    
+                    string token = Guid.NewGuid().ToString();
+                    var modList = Chainloader.PluginInfos.Keys.ToList(); // We get the server's mod list for the expected hash.
+                    string expectedHash = HACIntegrity.GenerateClientCompositeHash(token, modList);
+                    
+                    PendingHeartbeats[steamId] = expectedHash;
+                    // FIX: Send a broadcast packet with the target ID.
+                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HeartbeatRequest { ChallengeToken = token, TargetSteamID = steamId });
+                }
+                else
+                {
+                    // Player disconnected, end the coroutine.
+                    PendingHeartbeats.Remove(steamId);
+                    yield break;
+                }
+                
+                yield return new WaitForSeconds(HeartbeatInterval.Value);
+            }
+            // Clean up if the player is no longer verified for any other reason.
+            PendingHeartbeats.Remove(steamId);
         }
 
         public IEnumerator KickClientAfterDelay(Player player)
@@ -391,20 +498,13 @@ namespace HardAntiCheat
                 if(Instance != null) Instance.StopCoroutine(verificationData.KickCoroutine);
                 PendingVerification.Remove(steamId);
             }
+            
+            // Also remove from heartbeats and verified list.
+            PendingHeartbeats.Remove(steamId);
+            VerifiedSteamIDs.Remove(steamId);
 
-            Player playerToPunish = null;
-            if (AtlyssNetworkManager._current != null)
-            {
-                foreach (var p in FindObjectsOfType<Player>())
-                {
-                    if (ulong.TryParse(p._steamID, out ulong id) && id == steamId)
-                    {
-                        playerToPunish = p;
-                        break;
-                    }
-                }
-            }
-
+            Player playerToPunish = GetPlayerBySteamID(steamId);
+            
             if (playerToPunish == null || playerToPunish.connectionToClient == null)
             {
                 Log.LogError($"Could not find player with SteamID {steamId} to enforce handshake punishment.");
@@ -582,6 +682,8 @@ namespace HardAntiCheat
             XpGainHistory.Remove(netId);
             ServerPlayerAirborneStates.Remove(netId);
             ServerPlayerInitialSpeeds.Remove(netId);
+            ServerPlayerMovementStats.Remove(netId);
+            ServerPlayerMovementTimers.Remove(netId);
             ServerPlayerInfractionCount.Remove(netId);
             ServerPlayerGracePeriod.Remove(netId);
             ServerPunishmentCooldown.Remove(netId);
@@ -595,6 +697,23 @@ namespace HardAntiCheat
                 PendingVerification.Remove(steamId);
             }
             VerifiedSteamIDs.Remove(steamId);
+            PendingHeartbeats.Remove(steamId);
+        }
+
+        private static Player GetPlayerBySteamID(ulong steamId)
+        {
+            // This is inefficient, but necessary without a direct lookup dictionary.
+            foreach (var conn in NetworkServer.connections.Values)
+            {
+                if (conn.identity != null && conn.identity.TryGetComponent<Player>(out var p))
+                {
+                    if (ulong.TryParse(p._steamID, out ulong id) && id == steamId)
+                    {
+                        return p;
+                    }
+                }
+            }
+            return null;
         }
 	}
     
@@ -624,8 +743,9 @@ namespace HardAntiCheat
                     Main.ServerPlayerInitialSpeeds[netId] = __instance.Network_movSpeed;
                 }
                 Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = __instance.transform.position, Timestamp = Time.time };
+                Main.ServerPlayerMovementStats[netId] = new PlayerMovementStats { RecentSpeeds = new List<float>(), TimeAtMaxSpeed = 0f };
+                Main.ServerPlayerMovementTimers[netId] = Time.time; // Initialize the timer for movement stats.
 
-                // --- INTEGRITY HANDSHAKE INITIATION ---
                 if (Main.EnableIntegrityChecks.Value)
                 {
                     if (player != null && !player.isLocalPlayer && ulong.TryParse(player._steamID, out ulong steamId))
@@ -639,60 +759,13 @@ namespace HardAntiCheat
                         {
                             Main.Log.LogInfo($"Player {player._nickname} spawned on server. Sending integrity challenge...");
                             string token = Guid.NewGuid().ToString();
-                            int challengeType = 0;
-                            string expectedHash = HACIntegrity.GenerateClientHash(token, challengeType);
-                            var requestPacket = new HAC_HandshakeRequest { TargetSteamID = steamId, ChallengeToken = token, ChallengeType = challengeType };
+                            // We use the server's mod list to generate the hash we expect the client to have.
+                            var serverModList = Chainloader.PluginInfos.Keys.ToList();
+                            string expectedHash = HACIntegrity.GenerateClientCompositeHash(token, serverModList);
+                            var requestPacket = new HAC_HandshakeRequest { TargetSteamID = steamId, ChallengeToken = token, ChallengeType = 0 };
                             CodeTalkerNetwork.SendNetworkPacket(requestPacket);
                             var kickCoroutine = Main.Instance.StartCoroutine(Main.Instance.KickClientAfterDelay(player));
                             Main.PendingVerification[steamId] = (expectedHash, kickCoroutine);
-                        }
-                    }
-                }
-                
-                // --- NEW: FLUFFUTILITIES STEAM LOBBY DATA CHECK ---
-                if (player != null && !Main.IsPlayerExempt(player) && Main.EnableFluffUtilitiesCheck.Value)
-                {
-                    if (ulong.TryParse(player._steamID, out ulong steamId))
-                    {
-                        // FIX: A ulong must be passed to the CSteamID constructor. Direct assignment is not allowed.
-                        CSteamID steamCId = new CSteamID(steamId);
-                        CSteamID lobbyId = new CSteamID(SteamLobby._current._currentLobbyID);
-                        string fluffKey = "cc8615a747a44321be7911e36887b64a.ver";
-
-                        string fluffVersion = SteamMatchmaking.GetLobbyMemberData(lobbyId, steamCId, fluffKey);
-
-                        if (!string.IsNullOrEmpty(fluffVersion))
-                        {
-                            string action = Main.FluffUtilitiesAction.Value.ToLower();
-                            string reason = $"Player {player._nickname} detected with FluffUtilities (Version: {fluffVersion}). Action: {action.ToUpper()}.";
-                            Main.Log.LogWarning(reason);
-                            try { File.AppendAllText(Main.InfractionLogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [MOD_DETECT] " + reason + Environment.NewLine); } catch {}
-
-                            if (action == "kick")
-                            {
-                                player.connectionToClient.Disconnect();
-                            }
-                            else if (action == "ban")
-                            {
-                                HC_PeerListEntry targetPeer = null;
-                                if (HostConsole._current != null)
-                                {
-                                    foreach(var entry in HostConsole._current._peerListEntries)
-                                    {
-                                        if (entry._netId != null && entry._netId.netId == player.netId) { targetPeer = entry; break; }
-                                    }
-                                }
-                                if (targetPeer != null)
-                                {
-                                    HostConsole._current._selectedPeerEntry = targetPeer;
-                                    HostConsole._current.Ban_Peer();
-                                }
-                                else
-                                {
-                                    player.connectionToClient.Disconnect();
-                                    Main.Log.LogError($"Could not find PeerListEntry to BAN for FluffUtilities detection, kicked instead.");
-                                }
-                            }
                         }
                     }
                 }
@@ -811,7 +884,7 @@ namespace HardAntiCheat
 	}
     #endregion
 	
-	#region Blatent Honeypots
+	#region Blatent Honeypots - UPGRADED
 	
 	#region Teleportation
     [HarmonyPatch(typeof(NetworkTransformBase), nameof(NetworkTransformBase.CmdTeleport), new Type[] { typeof(Vector3), typeof(Quaternion) })]
@@ -839,10 +912,51 @@ namespace HardAntiCheat
     	}
     }
     #endregion
+
+    // NEW: Honeypot command added to the Player class.
+    [HarmonyPatch(typeof(Player))]
+    public static class PlayerHoneypotPatch
+    {
+        [HarmonyPatch("Start")]
+        [HarmonyPostfix]
+        public static void AddHoneypot(Player __instance)
+        {
+            // We add our command component to the player object at runtime.
+            // A cheater decompiling the Player class won't see it, but it will exist on the object.
+            if (__instance.gameObject.GetComponent<HoneypotComponent>() == null)
+            {
+                __instance.gameObject.AddComponent<HoneypotComponent>();
+            }
+        }
+    }
+
+    public class HoneypotComponent : NetworkBehaviour
+    {
+        // This command should never be called by a legitimate client.
+        // Its existence is a trap for people reading the decompiled code.
+        [Command]
+        public void Cmd_ExecuteDebugBypass()
+        {
+            if(ulong.TryParse(GetComponent<Player>()._steamID, out ulong steamId))
+            {
+                Main.Log.LogWarning($"HONEYPOT TRIGGERED by SteamID {steamId}. Banning immediately.");
+                HC_PeerListEntry targetPeer = HostConsole._current._peerListEntries.FirstOrDefault(p => p._netId != null && p._netId.netId == netId);
+                if (HostConsole._current != null && targetPeer != null)
+                {
+                    HostConsole._current._selectedPeerEntry = targetPeer;
+                    HostConsole._current.Ban_Peer();
+                }
+                else
+                {
+                    connectionToClient.Disconnect(); // Fallback to kick if ban fails.
+                }
+            }
+        }
+    }
 	
 	#endregion
 
-	#region Movement/Airborne Protection
+	#region Movement/Airborne Protection - UPGRADED
 	[HarmonyPatch(typeof(PlayerMove), "Init_Jump")]
 	public static class JumpValidationPatch
 	{
@@ -870,6 +984,8 @@ namespace HardAntiCheat
         private const float VERTICAL_STALL_TOLERANCE = 0.05f;
         private const float VERTICAL_STALL_GRACE_PERIOD = 0.5f;
         private const float MAX_FLIGHT_HEIGHT = 4240f;
+        private const int STATS_BUFFER_SIZE = 20; // Number of speed samples to keep for analysis.
+        private const float STATS_ANALYSIS_INTERVAL = 2.0f; // How often to analyze the stats.
 
         public static void Postfix(PlayerMove __instance)
         {
@@ -908,36 +1024,53 @@ namespace HardAntiCheat
             {
                 if (Main.ServerPlayerPositions.TryGetValue(netId, out PlayerPositionData lastPositionData))
                 {
-                    if (currentPosition != lastPositionData.Position)
+                    float timeElapsed = Time.time - lastPositionData.Timestamp;
+                    float distanceTraveled = Vector3.Distance(lastPositionData.Position, currentPosition);
+                    
+                    if (timeElapsed > 0.1f) // Avoid division by zero and noisy data
                     {
-                        float timeElapsed = Time.time - lastPositionData.Timestamp;
-                        if (timeElapsed > Main.MovementTimeThreshold.Value)
-                        {
-                            float distanceTraveled = Vector3.Distance(lastPositionData.Position, currentPosition);
-                            
-                            float serverSideMoveSpeed = Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float speed) ? speed : 50f;
-                            float maxPossibleDistance = (serverSideMoveSpeed * 1.5f * timeElapsed) + Main.MovementGraceBuffer.Value;
-                            
-                            if (distanceTraveled > maxPossibleDistance)
-                            {
-                                string cheatType = distanceTraveled > Main.TeleportDistanceThreshold.Value ? "Movement Hack (Teleport)" : "Movement Hack (Speed Mismatch)";
-                                string details = $"Moved {distanceTraveled:F1} units in {timeElapsed:F2}s (Expected max: {maxPossibleDistance:F1}). Reverting position.";
+                        float currentSpeed = distanceTraveled / timeElapsed;
+                        float serverSideMoveSpeed = Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float speed) ? speed : 50f;
+                        float maxLegitSpeed = serverSideMoveSpeed * 1.5f;
 
-                                foreach (var conn in NetworkServer.connections.Values)
-                                {
-                                    if (conn?.identity == null || conn.identity.netId == netId) continue;
-                                    if (Vector3.Distance(currentPosition, conn.identity.GetComponent<Player>().transform.position) < 1.0f)
-                                    {
-                                        details += " Teleported directly to another player.";
-                                        cheatType = "Movement Hack (Teleport)";
-                                        break;
-                                    }
-                                }
-                                Main.LogInfraction(__instance, cheatType, details);
-                                player.transform.position = lastPositionData.Position;
-                                Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = lastPositionData.Position, Timestamp = Time.time };
-                                return;
+                        // --- UPGRADED: STATISTICAL ANALYSIS ---
+                        if (Main.ServerPlayerMovementStats.TryGetValue(netId, out var stats))
+                        {
+                            stats.RecentSpeeds.Add(currentSpeed);
+                            if (stats.RecentSpeeds.Count > STATS_BUFFER_SIZE) stats.RecentSpeeds.RemoveAt(0);
+
+                            if(currentSpeed / maxLegitSpeed > 0.95f) // Are they moving at >95% of max possible speed?
+                            {
+                                stats.TimeAtMaxSpeed += timeElapsed;
                             }
+
+                            // Every few seconds, analyze the data.
+                            // FIX: Use the dictionary for the timer, not an instance field.
+                            if(Main.ServerPlayerMovementTimers.TryGetValue(netId, out float lastCheckTime) && Time.time > lastCheckTime + STATS_ANALYSIS_INTERVAL)
+                            {
+                                Main.ServerPlayerMovementTimers[netId] = Time.time;
+                                float averageSpeed = stats.RecentSpeeds.Average();
+                                // If average speed is suspiciously high or they spend too much time at peak speed.
+                                if (averageSpeed > maxLegitSpeed * 0.9f || stats.TimeAtMaxSpeed > STATS_ANALYSIS_INTERVAL * 0.8f)
+                                {
+                                    Main.LogInfraction(__instance, "Movement Hack (Statistical)", $"Player exhibited unnaturally consistent high speed. Avg: {averageSpeed:F1}, MaxTime: {stats.TimeAtMaxSpeed:F1}s");
+                                }
+                                // Reset time for next window.
+                                stats.TimeAtMaxSpeed = 0f;
+                            }
+                            Main.ServerPlayerMovementStats[netId] = stats;
+                        }
+                    }
+
+                    if (timeElapsed > Main.MovementTimeThreshold.Value)
+                    {
+                        float maxPossibleDistance = (Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float speed) ? speed : 50f) * 1.5f * timeElapsed + Main.MovementGraceBuffer.Value;
+                        if (distanceTraveled > maxPossibleDistance)
+                        {
+                            string cheatType = distanceTraveled > Main.TeleportDistanceThreshold.Value ? "Movement Hack (Teleport)" : "Movement Hack (Speed Mismatch)";
+                            string details = $"Moved {distanceTraveled:F1} units in {timeElapsed:F2}s (Expected max: {maxPossibleDistance:F1}). Reverting position.";
+                            Main.LogInfraction(__instance, cheatType, details);
+                            player.transform.position = lastPositionData.Position;
                         }
                     }
                 }
@@ -972,15 +1105,8 @@ namespace HardAntiCheat
                 else
                 {
                     airData.AirTime += Time.deltaTime;
-
-                    if (Mathf.Abs(currentPosition.y - airData.LastVerticalPosition) < VERTICAL_STALL_TOLERANCE)
-                    {
-                        airData.VerticalStallTime += Time.deltaTime;
-                    }
-                    else
-                    {
-                        airData.VerticalStallTime = 0f;
-                    }
+                    if (Mathf.Abs(currentPosition.y - airData.LastVerticalPosition) < VERTICAL_STALL_TOLERANCE) airData.VerticalStallTime += Time.deltaTime;
+                    else airData.VerticalStallTime = 0f;
                 }
                 
                 airData.LastVerticalPosition = currentPosition.y;

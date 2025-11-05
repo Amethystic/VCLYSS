@@ -17,8 +17,9 @@
     <ItemGroup>
         <!-- Thunderstore dependency strings -->
         <ThunderstoreDependency Include="BepInEx-BepInExPack-5.4.2100" Visible="false"/>
-        <ThunderstoreDependency Include="Marioalexsan-PerfectGuard-1.0.0" Visible="false"/>
+        <ThunderstoreDependency Include="s0apy-PerfectAnti-1.1.0" Visible="false"/>
         <ThunderstoreDependency Include="Soggy_Pancake-CodeYapper-2.0.0" Visible="false"/>
+        <!--<ThunderstoreDependency Include="Marioalexsan-PerfectGuard-1.0.0" Visible="false"/>/>-->
         <!--<ThunderstoreDependency Include="Nessie-EasySettings-1.1.8" Visible="false" />-->
 
         <!-- Output items to include from build assemblies -->
