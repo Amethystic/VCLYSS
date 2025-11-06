@@ -1,9 +1,9 @@
 {
   "name": "HardAntiCheat",
-  "version_number": "2.2.8",
+  "version_number": "2.2.9",
   "website_url": "https://discord.gg/HgMtdpXYud",
   "description": "Anti-cheat plugin for Atlyss multiplayer. (In Public Testing)",
   "dependencies": [
-       "BepInEx-BepInExPack-5.4.2100","Marioalexsan-PerfectGuard-1.1.0","Soggy_Pancake-CodeYapper-2.0.0"
+       "BepInEx-BepInExPack-5.4.2304","Marioalexsan-PerfectGuard-1.1.0","Soggy_Pancake-CodeYapper-2.0.0"
   ]
 }
