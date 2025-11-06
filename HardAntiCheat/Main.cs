@@ -22,7 +22,7 @@ using UnityEngine.UI;
 namespace HardAntiCheat
 {
     #region Custom Network Packets - UPGRADED
-    public class HacHandshakeRequest : PacketBase
+    public class HAC_HandshakeRequest : PacketBase
     {
         public override string PacketSourceGUID => "HardAntiCheat";
         [JsonProperty] public ulong TargetSteamID;
@@ -30,21 +30,21 @@ namespace HardAntiCheat
         [JsonProperty] public int ChallengeType;
     }
 
-    public class HacHandshakeResponse : PacketBase
+    public class HAC_HandshakeResponse : PacketBase
     {
         public override string PacketSourceGUID => "HardAntiCheat";
         [JsonProperty] public string ChallengeHash;
-        [JsonProperty] public List<string> ModList;
+        [JsonProperty] public Dictionary<string, string> ModListings;
     }
     
-    public class HacHeartbeatRequest : PacketBase
+    public class HAC_HeartbeatRequest : PacketBase
     {
         public override string PacketSourceGUID => "HardAntiCheat";
         [JsonProperty] public ulong TargetSteamID;
         [JsonProperty] public string ChallengeToken;
     }
 
-    public class HacHeartbeatResponse : PacketBase
+    public class HAC_HeartbeatResponse : PacketBase
     {
         public override string PacketSourceGUID => "HardAntiCheat";
         [JsonProperty] public string ChallengeHash;
@@ -59,9 +59,9 @@ namespace HardAntiCheat
     #endregion
 
     #region Integrity Hashing Logic - UPGRADED
-    public static class HacIntegrity
+    public static class HACIntegrity
     {
-        public static string GenerateClientCompositeHash(string token, List<string> modList)
+        public static string GenerateClientCompositeHash(string token, Dictionary<string, string> modListings)
         {
             if (string.IsNullOrEmpty(token)) return string.Empty;
 
@@ -90,9 +90,10 @@ namespace HardAntiCheat
                             }
                         }
 
-                        if (modList != null)
+                        if (modListings != null)
                         {
-                            string modListString = string.Join(",", modList.OrderBy(g => g));
+                            var sortedList = modListings.OrderBy(kvp => kvp.Key).Select(kvp => $"{kvp.Key}:{kvp.Value}");
+                            string modListString = string.Join(",", sortedList);
                             byte[] modListBytes = Encoding.UTF8.GetBytes(modListString);
                             memoryStream.Write(modListBytes, 0, modListBytes.Length);
                         }
@@ -208,7 +209,7 @@ namespace HardAntiCheat
             HACEnforce = Config.Bind("1. General", "Enable Mod List Enforcement", false, "If true, the server will check connecting clients' mod lists against the rules below.");
             HACListType = Config.Bind("1. General", "Mod List Type", "blacklist", new ConfigDescription("Determines how the mod list is used.", new AcceptableValueList<string>("blacklist", "whitelist")));
             HACHandshakeFailAction = Config.Bind("1. General", "Handshake Fail Action", "kick", new ConfigDescription("The action to take if a client fails the integrity check or mod list check.", new AcceptableValueList<string>("kick", "ban")));
-            HACModList = Config.Bind("1. General", "Mod List (GUIDs)", "some.banned.mod.guid,another.bad.mod", "Comma-separated list of BepInEx plugin GUIDs to use for the blacklist/whitelist.");
+            HACModList = Config.Bind("1. General", "Mod List (GUIDs or Names)", "some.banned.mod.guid,Another Banned Mod Name", "Comma-separated list of BepInEx plugin GUIDs or Names to use for the blacklist/whitelist.");
 
             EnableMovementChecks = Config.Bind("2. Movement Detections", "Enable Teleport/Distance Checks", true, "Checks the final result of player movement to catch physics-based speed hacks and teleports.");
             MaxEffectiveSpeed = Config.Bind("2. Movement Detections", "Max Effective Speed", 100f, "The maximum plausible speed (units per second) a player can move.");
@@ -246,10 +247,10 @@ namespace HardAntiCheat
             TrustedSteamIDs.SettingChanged += (s, e) => ParseWhitelist();
             HACModList.SettingChanged += (s, e) => ParseHACModList();
             
-            CodeTalkerNetwork.RegisterListener<HacHandshakeRequest>(OnClientReceivedHandshakeRequest);
-            CodeTalkerNetwork.RegisterListener<HacHandshakeResponse>(OnServerReceivedHandshakeResponse);
-            CodeTalkerNetwork.RegisterListener<HacHeartbeatRequest>(OnClientReceivedHeartbeatRequest);
-            CodeTalkerNetwork.RegisterListener<HacHeartbeatResponse>(OnServerReceivedHeartbeatResponse);
+            CodeTalkerNetwork.RegisterListener<HAC_HandshakeRequest>(OnClientReceivedHandshakeRequest);
+            CodeTalkerNetwork.RegisterListener<HAC_HandshakeResponse>(OnServerReceivedHandshakeResponse);
+            CodeTalkerNetwork.RegisterListener<HAC_HeartbeatRequest>(OnClientReceivedHeartbeatRequest);
+            CodeTalkerNetwork.RegisterListener<HAC_HeartbeatResponse>(OnServerReceivedHeartbeatResponse);
             
 			harmony.PatchAll();
 			Log.LogInfo($"[{ModInfo.NAME}] has been loaded. Infractions will be logged to: {InfractionLogPath}");
@@ -257,48 +258,48 @@ namespace HardAntiCheat
         
         public static void OnClientReceivedHandshakeRequest(PacketHeader header, PacketBase packet)
         {
-            if (packet is HacHandshakeRequest request)
+            if (packet is HAC_HandshakeRequest request)
             {
                 if (ulong.TryParse(Player._mainPlayer?._steamID, out ulong mySteamId) && request.TargetSteamID == mySteamId)
                 {
                     Log.LogInfo("Received verification request from server. Computing composite integrity hash...");
-                    var modList = Chainloader.PluginInfos.Keys.ToList();
-                    string clientHash = HacIntegrity.GenerateClientCompositeHash(request.ChallengeToken, modList);
-                    CodeTalkerNetwork.SendNetworkPacket(new HacHandshakeResponse { ChallengeHash = clientHash, ModList = modList });
+                    var modListings = Chainloader.PluginInfos.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Metadata.Name);
+                    string clientHash = HACIntegrity.GenerateClientCompositeHash(request.ChallengeToken, modListings);
+                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HandshakeResponse { ChallengeHash = clientHash, ModListings = modListings });
                 }
             }
         }
 
         public static void OnServerReceivedHandshakeResponse(PacketHeader header, PacketBase packet)
         {
-            if (packet is HacHandshakeResponse response)
+            if (packet is HAC_HandshakeResponse response)
             {
                 ulong senderSteamId = header.SenderID;
                 if (PendingVerification.TryGetValue(senderSteamId, out var verificationData))
                 {
                     if (HACEnforce.Value)
                     {
-                        var clientModList = response.ModList ?? new List<string>();
+                        var clientModListings = response.ModListings ?? new Dictionary<string, string>();
                         string validationMode = HACListType.Value.ToLower();
                         bool failed = false;
                         string reason = "";
 
                         if (validationMode == "blacklist")
                         {
-                            string bannedMod = clientModList.FirstOrDefault(guid => ManagedMods.Contains(guid));
-                            if (bannedMod != null)
+                            var bannedMod = clientModListings.FirstOrDefault(mod => ManagedMods.Contains(mod.Key) || ManagedMods.Contains(mod.Value));
+                            if (bannedMod.Key != null)
                             {
                                 failed = true;
-                                reason = $"Handshake failed: Client has a banned mod ({bannedMod}).";
+                                reason = $"Handshake failed: Client has a banned mod (Name: {bannedMod.Value}, GUID: {bannedMod.Key}).";
                             }
                         }
                         else
                         {
-                            string unlistedMod = clientModList.FirstOrDefault(guid => guid != ModInfo.GUID && !ManagedMods.Contains(guid));
-                            if (unlistedMod != null)
+                            var unlistedMod = clientModListings.FirstOrDefault(mod => mod.Key != ModInfo.GUID && !ManagedMods.Contains(mod.Key) && !ManagedMods.Contains(mod.Value));
+                            if (unlistedMod.Key != null)
                             {
                                 failed = true;
-                                reason = $"Handshake failed: Client has a non-whitelisted mod ({unlistedMod}).";
+                                reason = $"Handshake failed: Client has a non-whitelisted mod (Name: {unlistedMod.Value}, GUID: {unlistedMod.Key}).";
                             }
                         }
 
@@ -333,20 +334,20 @@ namespace HardAntiCheat
 
         public static void OnClientReceivedHeartbeatRequest(PacketHeader header, PacketBase packet)
         {
-            if (packet is HacHeartbeatRequest request)
+            if (packet is HAC_HeartbeatRequest request)
             {
                 if (ulong.TryParse(Player._mainPlayer?._steamID, out ulong mySteamId) && request.TargetSteamID == mySteamId)
                 {
-                    var modList = Chainloader.PluginInfos.Keys.ToList();
-                    string clientHash = HacIntegrity.GenerateClientCompositeHash(request.ChallengeToken, modList);
-                    CodeTalkerNetwork.SendNetworkPacket(new HacHeartbeatResponse { ChallengeHash = clientHash });
+                    var modListings = Chainloader.PluginInfos.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Metadata.Name);
+                    string clientHash = HACIntegrity.GenerateClientCompositeHash(request.ChallengeToken, modListings);
+                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HeartbeatResponse { ChallengeHash = clientHash });
                 }
             }
         }
         
         public static void OnServerReceivedHeartbeatResponse(PacketHeader header, PacketBase packet)
         {
-            if (packet is HacHeartbeatResponse response)
+            if (packet is HAC_HeartbeatResponse response)
             {
                 ulong senderSteamId = header.SenderID;
                 if (PendingHeartbeats.TryGetValue(senderSteamId, out string expectedHash))
@@ -376,11 +377,11 @@ namespace HardAntiCheat
                     }
                     
                     string token = Guid.NewGuid().ToString();
-                    var modList = Chainloader.PluginInfos.Keys.ToList();
-                    string expectedHash = HacIntegrity.GenerateClientCompositeHash(token, modList);
+                    var modListings = Chainloader.PluginInfos.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Metadata.Name);
+                    string expectedHash = HACIntegrity.GenerateClientCompositeHash(token, modListings);
                     
                     PendingHeartbeats[steamId] = expectedHash;
-                    CodeTalkerNetwork.SendNetworkPacket(new HacHeartbeatRequest { ChallengeToken = token, TargetSteamID = steamId });
+                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HeartbeatRequest { ChallengeToken = token, TargetSteamID = steamId });
                 }
                 else
                 {
@@ -456,7 +457,7 @@ namespace HardAntiCheat
                     count++;
                 }
             }
-            Log.LogInfo($"Successfully loaded {count} GUID(s) into the HAC Mod List for {HACListType.Value} enforcement.");
+            Log.LogInfo($"Successfully loaded {count} entry(s) into the HAC Mod List for {HACListType.Value} enforcement.");
         }
         
         private static void PunishHandshakeFailure(ulong steamId, string reason)
@@ -724,9 +725,9 @@ namespace HardAntiCheat
                         {
                             Main.Log.LogInfo($"Player {player._nickname} spawned on server. Sending integrity challenge...");
                             string token = Guid.NewGuid().ToString();
-                            var serverModList = Chainloader.PluginInfos.Keys.ToList();
-                            string expectedHash = HacIntegrity.GenerateClientCompositeHash(token, serverModList);
-                            var requestPacket = new HacHandshakeRequest { TargetSteamID = steamId, ChallengeToken = token, ChallengeType = 0 };
+                            var serverModListings = Chainloader.PluginInfos.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Metadata.Name);
+                            string expectedHash = HACIntegrity.GenerateClientCompositeHash(token, serverModListings);
+                            var requestPacket = new HAC_HandshakeRequest { TargetSteamID = steamId, ChallengeToken = token, ChallengeType = 0 };
                             CodeTalkerNetwork.SendNetworkPacket(requestPacket);
                             var kickCoroutine = Main.Instance.StartCoroutine(Main.Instance.KickClientAfterDelay(player));
                             Main.PendingVerification[steamId] = (expectedHash, kickCoroutine);
@@ -1264,7 +1265,7 @@ namespace HardAntiCheat
         {
             if (Main.EnableIntegrityChecks.Value)
             {
-                CodeTalkerNetwork.RegisterListener<HacHandshakeResponse>(Main.OnServerReceivedHandshakeResponse);
+                CodeTalkerNetwork.RegisterListener<HAC_HandshakeResponse>(Main.OnServerReceivedHandshakeResponse);
                 Main.Log.LogInfo("HAC Server-side integrity check handler registered.");
 
                 if (SteamUser.GetSteamID() is CSteamID steamId && steamId.IsValid())
