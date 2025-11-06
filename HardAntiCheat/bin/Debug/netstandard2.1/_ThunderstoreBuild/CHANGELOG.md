@@ -10,7 +10,7 @@
 - Extended verification length - 10/14/25
 - Anticheat Integ Check Addition to minimize chances of bypassing - 10/17/25
 - Game update - 10/21/25
-- Added s0apy-PerfectAnti-1.1.0 as a dependency - 11/4/25
+- s0apy-PerfectAnti-1.1.0 -> Marioalexsan-PerfectGuard-1.1.0 - [+] 11/6/25
 - Improved Mod Validation/Configurations (Made it abide the thunderstore mod policy rules a little bit more + Made it able to also read names instead of just GUIDS) - [~] 11/5/25 / 9:43pm
 
 ## V2 - Refactory - Public Test Update (cont ^)
