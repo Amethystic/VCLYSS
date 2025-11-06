@@ -22,7 +22,7 @@ using UnityEngine.UI;
 namespace HardAntiCheat
 {
     #region Custom Network Packets - UPGRADED
-    public class HAC_HandshakeRequest : PacketBase
+    public class HacHandshakeRequest : PacketBase
     {
         public override string PacketSourceGUID => "HardAntiCheat";
         [JsonProperty] public ulong TargetSteamID;
@@ -30,22 +30,21 @@ namespace HardAntiCheat
         [JsonProperty] public int ChallengeType;
     }
 
-    public class HAC_HandshakeResponse : PacketBase
+    public class HacHandshakeResponse : PacketBase
     {
         public override string PacketSourceGUID => "HardAntiCheat";
         [JsonProperty] public string ChallengeHash;
         [JsonProperty] public List<string> ModList;
     }
     
-    // NEW: Packets for the periodic re-verification heartbeat.
-    public class HAC_HeartbeatRequest : PacketBase
+    public class HacHeartbeatRequest : PacketBase
     {
         public override string PacketSourceGUID => "HardAntiCheat";
-        [JsonProperty] public ulong TargetSteamID; // FIX: Added target ID for broadcast routing
+        [JsonProperty] public ulong TargetSteamID;
         [JsonProperty] public string ChallengeToken;
     }
 
-    public class HAC_HeartbeatResponse : PacketBase
+    public class HacHeartbeatResponse : PacketBase
     {
         public override string PacketSourceGUID => "HardAntiCheat";
         [JsonProperty] public string ChallengeHash;
@@ -56,14 +55,12 @@ namespace HardAntiCheat
     public struct PlayerPositionData { public Vector3 Position; public float Timestamp; }
 	public struct PlayerStatsData { public int Level; public int Experience; }
 	public struct PlayerAirborneData { public float AirTime; public Vector3 LastGroundedPosition; public int ServerSideJumpCount; public float LastVerticalPosition; public float VerticalStallTime; }
-    // NEW: Structure to hold movement statistics for behavioral analysis.
     public struct PlayerMovementStats { public List<float> RecentSpeeds; public float TimeAtMaxSpeed; }
     #endregion
 
     #region Integrity Hashing Logic - UPGRADED
-    public static class HACIntegrity
+    public static class HacIntegrity
     {
-        // UPGRADED: Now generates a composite hash from multiple critical files and data points.
         public static string GenerateClientCompositeHash(string token, List<string> modList)
         {
             if (string.IsNullOrEmpty(token)) return string.Empty;
@@ -74,11 +71,9 @@ namespace HardAntiCheat
                 {
                     using (var memoryStream = new MemoryStream())
                     {
-                        // 1. Hash this mod's DLL
                         byte[] selfHash = File.ReadAllBytes(Assembly.GetExecutingAssembly().Location);
                         memoryStream.Write(selfHash, 0, selfHash.Length);
 
-                        // 2. Hash core BepInEx and game files
                         string bepInExRoot = Paths.BepInExRootPath;
                         string[] filesToHash = {
                             Path.Combine(bepInExRoot, "core", "BepInEx.dll"),
@@ -95,7 +90,6 @@ namespace HardAntiCheat
                             }
                         }
 
-                        // 3. Hash the mod list itself
                         if (modList != null)
                         {
                             string modListString = string.Join(",", modList.OrderBy(g => g));
@@ -103,11 +97,9 @@ namespace HardAntiCheat
                             memoryStream.Write(modListBytes, 0, modListBytes.Length);
                         }
 
-                        // 4. Hash the server's challenge token
                         byte[] tokenBytes = Encoding.UTF8.GetBytes(token);
                         memoryStream.Write(tokenBytes, 0, tokenBytes.Length);
                         
-                        // Compute the final hash from the combined stream
                         memoryStream.Position = 0;
                         return Convert.ToBase64String(sha256.ComputeHash(memoryStream));
                     }
@@ -131,14 +123,11 @@ namespace HardAntiCheat
 		internal static ManualLogSource Log;
 		internal static string InfractionLogPath;
         public static Main Instance { get; private set; }
-
-
-		// --- CONFIGURATION ENTRIES ---
+        
 		public static ConfigEntry<bool> EnableAntiCheat;
 		public static ConfigEntry<bool> DisableForHost;
         public static ConfigEntry<string> TrustedSteamIDs;
         public static ConfigEntry<bool> EnableIntegrityChecks;
-        // NEW: Configuration for the heartbeat re-verification system.
         public static ConfigEntry<bool> EnableHeartbeatCheck;
         public static ConfigEntry<float> HeartbeatInterval;
         public static ConfigEntry<bool> HACEnforce;
@@ -173,20 +162,17 @@ namespace HardAntiCheat
         public static ConfigEntry<bool> LogInfractionCount;
         public static ConfigEntry<bool> LogInfractionDetails;
 
-		// --- WHITELIST & MOD LISTS ---
         private static readonly HashSet<ulong> WhitelistedUsers = new HashSet<ulong>();
         private static readonly HashSet<string> ManagedMods = new HashSet<string>();
         
-		// --- SERVER-SIDE DATA DICTIONARIES ---
 		public static readonly Dictionary<uint, Dictionary<string, float>> ServerRemainingCooldowns = new Dictionary<uint, Dictionary<string, float>>();
         public static readonly Dictionary<uint, PlayerPositionData> ServerPlayerPositions = new Dictionary<uint, PlayerPositionData>();
 		public static readonly Dictionary<uint, PlayerStatsData> ServerPlayerStats = new Dictionary<uint, PlayerStatsData>();
         public static readonly Dictionary<uint, List<(float Timestamp, int Amount)>> XpGainHistory = new Dictionary<uint, List<(float, int)>>();
 		public static readonly Dictionary<uint, PlayerAirborneData> ServerPlayerAirborneStates = new Dictionary<uint, PlayerAirborneData>();
         public static readonly Dictionary<uint, float> ServerPlayerInitialSpeeds = new Dictionary<uint, float>();
-        // NEW: Dictionaries for advanced detections.
         public static readonly Dictionary<uint, PlayerMovementStats> ServerPlayerMovementStats = new Dictionary<uint, PlayerMovementStats>();
-        public static readonly Dictionary<uint, float> ServerPlayerMovementTimers = new Dictionary<uint, float>(); // FIX: For storing per-player timers.
+        public static readonly Dictionary<uint, float> ServerPlayerMovementTimers = new Dictionary<uint, float>();
 		public static readonly Dictionary<uint, int> ServerPlayerInfractionCount = new Dictionary<uint, int>();
 		public static readonly Dictionary<uint, float> ServerPlayerGracePeriod = new Dictionary<uint, float>();
         public static readonly Dictionary<uint, float> ServerPunishmentCooldown = new Dictionary<uint, float>();
@@ -195,9 +181,7 @@ namespace HardAntiCheat
         public static readonly Dictionary<uint, float> ServerAirborneCheckCooldowns = new Dictionary<uint, float>();
         public static readonly Dictionary<uint, float> AuthorizedSelfRevives = new Dictionary<uint, float>();
         
-        // --- CLIENT VERIFICATION DICTIONARIES ---
         internal static readonly Dictionary<ulong, (string ExpectedHash, Coroutine KickCoroutine)> PendingVerification = new Dictionary<ulong, (string, Coroutine)>();
-        // NEW: Dictionary for tracking pending heartbeat responses.
         internal static readonly Dictionary<ulong, string> PendingHeartbeats = new Dictionary<ulong, string>();
         internal static readonly HashSet<ulong> VerifiedSteamIDs = new HashSet<ulong>();
 		
@@ -218,7 +202,6 @@ namespace HardAntiCheat
 			EnableIntegrityChecks = Config.Bind("1. General", "Enable Client Integrity Checks", true, "If true, kicks players who fail a cryptographic challenge to prove they have the unmodified mod installed.");
 			VerificationTimeout = Config.Bind("1. General", "Verification Timeout", 25.0f, "How many seconds the server will wait for a client to verify before kicking them.");
             
-            // NEW: Heartbeat configuration
             EnableHeartbeatCheck = Config.Bind("1. General", "Enable Heartbeat Re-Verification", true, "Periodically re-challenges connected clients to ensure they remain unmodified.");
             HeartbeatInterval = Config.Bind("1. General", "Heartbeat Interval (Seconds)", 45.0f, "How often to send a heartbeat check to clients. Higher is less intrusive, lower is more secure.");
 
@@ -262,36 +245,33 @@ namespace HardAntiCheat
             ParseHACModList();
             TrustedSteamIDs.SettingChanged += (s, e) => ParseWhitelist();
             HACModList.SettingChanged += (s, e) => ParseHACModList();
-
-            // Register all network listeners
-            CodeTalkerNetwork.RegisterListener<HAC_HandshakeRequest>(OnClientReceivedHandshakeRequest);
-            CodeTalkerNetwork.RegisterListener<HAC_HandshakeResponse>(OnServerReceivedHandshakeResponse);
-            CodeTalkerNetwork.RegisterListener<HAC_HeartbeatRequest>(OnClientReceivedHeartbeatRequest);
-            CodeTalkerNetwork.RegisterListener<HAC_HeartbeatResponse>(OnServerReceivedHeartbeatResponse);
+            
+            CodeTalkerNetwork.RegisterListener<HacHandshakeRequest>(OnClientReceivedHandshakeRequest);
+            CodeTalkerNetwork.RegisterListener<HacHandshakeResponse>(OnServerReceivedHandshakeResponse);
+            CodeTalkerNetwork.RegisterListener<HacHeartbeatRequest>(OnClientReceivedHeartbeatRequest);
+            CodeTalkerNetwork.RegisterListener<HacHeartbeatResponse>(OnServerReceivedHeartbeatResponse);
             
 			harmony.PatchAll();
 			Log.LogInfo($"[{ModInfo.NAME}] has been loaded. Infractions will be logged to: {InfractionLogPath}");
 		}
         
-        // --- UPGRADED HANDSHAKE AND NEW HEARTBEAT LOGIC ---
-
         public static void OnClientReceivedHandshakeRequest(PacketHeader header, PacketBase packet)
         {
-            if (packet is HAC_HandshakeRequest request)
+            if (packet is HacHandshakeRequest request)
             {
                 if (ulong.TryParse(Player._mainPlayer?._steamID, out ulong mySteamId) && request.TargetSteamID == mySteamId)
                 {
                     Log.LogInfo("Received verification request from server. Computing composite integrity hash...");
                     var modList = Chainloader.PluginInfos.Keys.ToList();
-                    string clientHash = HACIntegrity.GenerateClientCompositeHash(request.ChallengeToken, modList);
-                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HandshakeResponse { ChallengeHash = clientHash, ModList = modList });
+                    string clientHash = HacIntegrity.GenerateClientCompositeHash(request.ChallengeToken, modList);
+                    CodeTalkerNetwork.SendNetworkPacket(new HacHandshakeResponse { ChallengeHash = clientHash, ModList = modList });
                 }
             }
         }
 
         public static void OnServerReceivedHandshakeResponse(PacketHeader header, PacketBase packet)
         {
-            if (packet is HAC_HandshakeResponse response)
+            if (packet is HacHandshakeResponse response)
             {
                 ulong senderSteamId = header.SenderID;
                 if (PendingVerification.TryGetValue(senderSteamId, out var verificationData))
@@ -312,7 +292,7 @@ namespace HardAntiCheat
                                 reason = $"Handshake failed: Client has a banned mod ({bannedMod}).";
                             }
                         }
-                        else // Whitelist mode
+                        else
                         {
                             string unlistedMod = clientModList.FirstOrDefault(guid => guid != ModInfo.GUID && !ManagedMods.Contains(guid));
                             if (unlistedMod != null)
@@ -336,7 +316,6 @@ namespace HardAntiCheat
                         PendingVerification.Remove(senderSteamId);
                         VerifiedSteamIDs.Add(senderSteamId);
                         Log.LogInfo($"SteamID {senderSteamId} has been successfully verified (Integrity and Mod List checks passed).");
-                        // NEW: If heartbeats are enabled, start the coroutine for this player.
                         if (EnableHeartbeatCheck.Value)
                         {
                             Instance.StartCoroutine(Instance.HeartbeatCoroutine(senderSteamId));
@@ -352,25 +331,22 @@ namespace HardAntiCheat
             }
         }
 
-        // NEW: Client receives a heartbeat check and responds with a new hash.
         public static void OnClientReceivedHeartbeatRequest(PacketHeader header, PacketBase packet)
         {
-            if (packet is HAC_HeartbeatRequest request)
+            if (packet is HacHeartbeatRequest request)
             {
-                // FIX: Client must check if the broadcasted heartbeat is for them.
                 if (ulong.TryParse(Player._mainPlayer?._steamID, out ulong mySteamId) && request.TargetSteamID == mySteamId)
                 {
                     var modList = Chainloader.PluginInfos.Keys.ToList();
-                    string clientHash = HACIntegrity.GenerateClientCompositeHash(request.ChallengeToken, modList);
-                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HeartbeatResponse { ChallengeHash = clientHash });
+                    string clientHash = HacIntegrity.GenerateClientCompositeHash(request.ChallengeToken, modList);
+                    CodeTalkerNetwork.SendNetworkPacket(new HacHeartbeatResponse { ChallengeHash = clientHash });
                 }
             }
         }
         
-        // NEW: Server receives a heartbeat response and validates it.
         public static void OnServerReceivedHeartbeatResponse(PacketHeader header, PacketBase packet)
         {
-            if (packet is HAC_HeartbeatResponse response)
+            if (packet is HacHeartbeatResponse response)
             {
                 ulong senderSteamId = header.SenderID;
                 if (PendingHeartbeats.TryGetValue(senderSteamId, out string expectedHash))
@@ -379,49 +355,41 @@ namespace HardAntiCheat
                     {
                         PunishHandshakeFailure(senderSteamId, "Failed heartbeat re-verification.");
                     }
-                    // If the hash is correct, we simply remove it. The absence of an entry means they are clear.
                     PendingHeartbeats.Remove(senderSteamId);
                 }
             }
         }
         
-        // NEW: Coroutine to manage sending periodic heartbeats to a specific client.
         private IEnumerator HeartbeatCoroutine(ulong steamId)
         {
-            // Wait a bit before the first check.
             yield return new WaitForSeconds(HeartbeatInterval.Value);
 
             while (VerifiedSteamIDs.Contains(steamId))
             {
-                // If the player is still connected...
                 Player player = GetPlayerBySteamID(steamId);
                 if (player != null)
                 {
-                    // If they already have a pending heartbeat they haven't answered, they fail.
                     if (PendingHeartbeats.ContainsKey(steamId))
                     {
                         PunishHandshakeFailure(steamId, "Did not respond to previous heartbeat in time.");
-                        yield break; // End the coroutine for this player.
+                        yield break;
                     }
                     
                     string token = Guid.NewGuid().ToString();
-                    var modList = Chainloader.PluginInfos.Keys.ToList(); // We get the server's mod list for the expected hash.
-                    string expectedHash = HACIntegrity.GenerateClientCompositeHash(token, modList);
+                    var modList = Chainloader.PluginInfos.Keys.ToList();
+                    string expectedHash = HacIntegrity.GenerateClientCompositeHash(token, modList);
                     
                     PendingHeartbeats[steamId] = expectedHash;
-                    // FIX: Send a broadcast packet with the target ID.
-                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HeartbeatRequest { ChallengeToken = token, TargetSteamID = steamId });
+                    CodeTalkerNetwork.SendNetworkPacket(new HacHeartbeatRequest { ChallengeToken = token, TargetSteamID = steamId });
                 }
                 else
                 {
-                    // Player disconnected, end the coroutine.
                     PendingHeartbeats.Remove(steamId);
                     yield break;
                 }
                 
                 yield return new WaitForSeconds(HeartbeatInterval.Value);
             }
-            // Clean up if the player is no longer verified for any other reason.
             PendingHeartbeats.Remove(steamId);
         }
 
@@ -499,7 +467,6 @@ namespace HardAntiCheat
                 PendingVerification.Remove(steamId);
             }
             
-            // Also remove from heartbeats and verified list.
             PendingHeartbeats.Remove(steamId);
             VerifiedSteamIDs.Remove(steamId);
 
@@ -618,7 +585,7 @@ namespace HardAntiCheat
                     {
                         player.connectionToClient.Disconnect();
                     } 
-                    else // Ban
+                    else
                     {
                         HC_PeerListEntry targetPeer = null;
                         if (HostConsole._current != null)
@@ -702,7 +669,6 @@ namespace HardAntiCheat
 
         private static Player GetPlayerBySteamID(ulong steamId)
         {
-            // This is inefficient, but necessary without a direct lookup dictionary.
             foreach (var conn in NetworkServer.connections.Values)
             {
                 if (conn.identity != null && conn.identity.TryGetComponent<Player>(out var p))
@@ -717,7 +683,6 @@ namespace HardAntiCheat
         }
 	}
     
-    #region Player Connection & Initialization
     [HarmonyPatch(typeof(PlayerMove), "Start")]
     public static class PlayerSpawnPatch
     {
@@ -744,7 +709,7 @@ namespace HardAntiCheat
                 }
                 Main.ServerPlayerPositions[netId] = new PlayerPositionData { Position = __instance.transform.position, Timestamp = Time.time };
                 Main.ServerPlayerMovementStats[netId] = new PlayerMovementStats { RecentSpeeds = new List<float>(), TimeAtMaxSpeed = 0f };
-                Main.ServerPlayerMovementTimers[netId] = Time.time; // Initialize the timer for movement stats.
+                Main.ServerPlayerMovementTimers[netId] = Time.time;
 
                 if (Main.EnableIntegrityChecks.Value)
                 {
@@ -759,10 +724,9 @@ namespace HardAntiCheat
                         {
                             Main.Log.LogInfo($"Player {player._nickname} spawned on server. Sending integrity challenge...");
                             string token = Guid.NewGuid().ToString();
-                            // We use the server's mod list to generate the hash we expect the client to have.
                             var serverModList = Chainloader.PluginInfos.Keys.ToList();
-                            string expectedHash = HACIntegrity.GenerateClientCompositeHash(token, serverModList);
-                            var requestPacket = new HAC_HandshakeRequest { TargetSteamID = steamId, ChallengeToken = token, ChallengeType = 0 };
+                            string expectedHash = HacIntegrity.GenerateClientCompositeHash(token, serverModList);
+                            var requestPacket = new HacHandshakeRequest { TargetSteamID = steamId, ChallengeToken = token, ChallengeType = 0 };
                             CodeTalkerNetwork.SendNetworkPacket(requestPacket);
                             var kickCoroutine = Main.Instance.StartCoroutine(Main.Instance.KickClientAfterDelay(player));
                             Main.PendingVerification[steamId] = (expectedHash, kickCoroutine);
@@ -772,9 +736,7 @@ namespace HardAntiCheat
             }
         }
     }
-    #endregion
 	
-    #region UI Button Watcher
     [HarmonyPatch]
     public static class ButtonPressValidationPatch
     {
@@ -815,9 +777,7 @@ namespace HardAntiCheat
             return true;
         }
     }
-    #endregion
 	
-	#region Item Usage Validation
 	[HarmonyPatch]
 	public static class ItemUsageValidationPatch
 	{
@@ -833,9 +793,7 @@ namespace HardAntiCheat
 			}
 		}
 	}
-    #endregion
 	
-    #region Server Authority Protection (Self-Revive)
 	[HarmonyPatch]
 	public static class ServerAuthorityValidationPatch
 	{
@@ -882,11 +840,7 @@ namespace HardAntiCheat
 			return true;
 		}
 	}
-    #endregion
 	
-	#region Blatent Honeypots - UPGRADED
-	
-	#region Teleportation
     [HarmonyPatch(typeof(NetworkTransformBase), nameof(NetworkTransformBase.CmdTeleport), new Type[] { typeof(Vector3), typeof(Quaternion) })]
     public static class CmdTeleportValidationPatch2
     {
@@ -911,9 +865,7 @@ namespace HardAntiCheat
     		return false;
     	}
     }
-    #endregion
 
-    // NEW: Honeypot command added to the Player class.
     [HarmonyPatch(typeof(Player))]
     public static class PlayerHoneypotPatch
     {
@@ -921,8 +873,6 @@ namespace HardAntiCheat
         [HarmonyPostfix]
         public static void AddHoneypot(Player __instance)
         {
-            // We add our command component to the player object at runtime.
-            // A cheater decompiling the Player class won't see it, but it will exist on the object.
             if (__instance.gameObject.GetComponent<HoneypotComponent>() == null)
             {
                 __instance.gameObject.AddComponent<HoneypotComponent>();
@@ -932,8 +882,6 @@ namespace HardAntiCheat
 
     public class HoneypotComponent : NetworkBehaviour
     {
-        // This command should never be called by a legitimate client.
-        // Its existence is a trap for people reading the decompiled code.
         [Command]
         public void Cmd_ExecuteDebugBypass()
         {
@@ -948,15 +896,12 @@ namespace HardAntiCheat
                 }
                 else
                 {
-                    connectionToClient.Disconnect(); // Fallback to kick if ban fails.
+                    connectionToClient.Disconnect();
                 }
             }
         }
     }
 	
-	#endregion
-
-	#region Movement/Airborne Protection - UPGRADED
 	[HarmonyPatch(typeof(PlayerMove), "Init_Jump")]
 	public static class JumpValidationPatch
 	{
@@ -984,8 +929,8 @@ namespace HardAntiCheat
         private const float VERTICAL_STALL_TOLERANCE = 0.05f;
         private const float VERTICAL_STALL_GRACE_PERIOD = 0.5f;
         private const float MAX_FLIGHT_HEIGHT = 4240f;
-        private const int STATS_BUFFER_SIZE = 20; // Number of speed samples to keep for analysis.
-        private const float STATS_ANALYSIS_INTERVAL = 2.0f; // How often to analyze the stats.
+        private const int STATS_BUFFER_SIZE = 20;
+        private const float STATS_ANALYSIS_INTERVAL = 2.0f;
 
         public static void Postfix(PlayerMove __instance)
         {
@@ -1005,7 +950,7 @@ namespace HardAntiCheat
                 {
                     if (Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float initialSpeed))
                     {
-                        if (__instance._movSpeed > initialSpeed * 1.5f) // Allow for some buffer
+                        if (__instance._movSpeed > initialSpeed * 1.5f)
                         {
                             Main.LogInfraction(__instance, "Stat Manipulation (Move Speed)", $"Detected illegal move speed of {__instance._movSpeed}. Reverting to initial speed of {initialSpeed}.");
                             __instance.Reset_MoveSpeed();
@@ -1027,35 +972,30 @@ namespace HardAntiCheat
                     float timeElapsed = Time.time - lastPositionData.Timestamp;
                     float distanceTraveled = Vector3.Distance(lastPositionData.Position, currentPosition);
                     
-                    if (timeElapsed > 0.1f) // Avoid division by zero and noisy data
+                    if (timeElapsed > 0.1f)
                     {
                         float currentSpeed = distanceTraveled / timeElapsed;
                         float serverSideMoveSpeed = Main.ServerPlayerInitialSpeeds.TryGetValue(netId, out float speed) ? speed : 50f;
                         float maxLegitSpeed = serverSideMoveSpeed * 1.5f;
 
-                        // --- UPGRADED: STATISTICAL ANALYSIS ---
                         if (Main.ServerPlayerMovementStats.TryGetValue(netId, out var stats))
                         {
                             stats.RecentSpeeds.Add(currentSpeed);
                             if (stats.RecentSpeeds.Count > STATS_BUFFER_SIZE) stats.RecentSpeeds.RemoveAt(0);
 
-                            if(currentSpeed / maxLegitSpeed > 0.95f) // Are they moving at >95% of max possible speed?
+                            if(currentSpeed / maxLegitSpeed > 0.95f)
                             {
                                 stats.TimeAtMaxSpeed += timeElapsed;
                             }
-
-                            // Every few seconds, analyze the data.
-                            // FIX: Use the dictionary for the timer, not an instance field.
+                            
                             if(Main.ServerPlayerMovementTimers.TryGetValue(netId, out float lastCheckTime) && Time.time > lastCheckTime + STATS_ANALYSIS_INTERVAL)
                             {
                                 Main.ServerPlayerMovementTimers[netId] = Time.time;
                                 float averageSpeed = stats.RecentSpeeds.Average();
-                                // If average speed is suspiciously high or they spend too much time at peak speed.
                                 if (averageSpeed > maxLegitSpeed * 0.9f || stats.TimeAtMaxSpeed > STATS_ANALYSIS_INTERVAL * 0.8f)
                                 {
                                     Main.LogInfraction(__instance, "Movement Hack (Statistical)", $"Player exhibited unnaturally consistent high speed. Avg: {averageSpeed:F1}, MaxTime: {stats.TimeAtMaxSpeed:F1}s");
                                 }
-                                // Reset time for next window.
                                 stats.TimeAtMaxSpeed = 0f;
                             }
                             Main.ServerPlayerMovementStats[netId] = stats;
@@ -1138,9 +1078,7 @@ namespace HardAntiCheat
             }
         }
     }
-	#endregion
-    
-    #region Experience and Level Manipulation Protection
+	
 	[HarmonyPatch]
 	public static class ExperienceValidationPatch
 	{
@@ -1239,9 +1177,7 @@ namespace HardAntiCheat
 			return true;
 		}
 	}
-    #endregion
 
-    #region Skill Cooldown Protection
 	[HarmonyPatch]
 	public static class CombatValidationPatch
 	{
@@ -1304,9 +1240,7 @@ namespace HardAntiCheat
 			return true;
 		}
 	}
-    #endregion
 
-    #region Network Connection Management
 	[HarmonyPatch(typeof(AtlyssNetworkManager), "OnServerDisconnect")]
 	public static class PlayerDisconnectPatch
 	{
@@ -1330,7 +1264,7 @@ namespace HardAntiCheat
         {
             if (Main.EnableIntegrityChecks.Value)
             {
-                CodeTalkerNetwork.RegisterListener<HAC_HandshakeResponse>(Main.OnServerReceivedHandshakeResponse);
+                CodeTalkerNetwork.RegisterListener<HacHandshakeResponse>(Main.OnServerReceivedHandshakeResponse);
                 Main.Log.LogInfo("HAC Server-side integrity check handler registered.");
 
                 if (SteamUser.GetSteamID() is CSteamID steamId && steamId.IsValid())
@@ -1341,5 +1275,4 @@ namespace HardAntiCheat
             }
         }
     }
-    #endregion
 }
