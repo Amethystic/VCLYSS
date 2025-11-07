@@ -703,6 +703,11 @@ namespace HardAntiCheat
                 uint netId = __instance.netId;
                 Player player = __instance.GetComponent<Player>();
 
+                if (__instance.gameObject.GetComponent<HoneypotComponent>() == null)
+                {
+                    __instance.gameObject.AddComponent<HoneypotComponent>();
+                }
+
                 Main.ServerPlayerGracePeriod[netId] = Time.time + GRACE_PERIOD_SECONDS;
                 if (!Main.ServerPlayerInitialSpeeds.ContainsKey(netId))
                 {
@@ -865,20 +870,6 @@ namespace HardAntiCheat
     		Main.LogInfraction(__instance, "Movement Hack (Illegal Teleport Command)", "Player directly called a Teleport command.");
     		return false;
     	}
-    }
-
-    [HarmonyPatch(typeof(Player))]
-    public static class PlayerHoneypotPatch
-    {
-        [HarmonyPatch("Start")]
-        [HarmonyPostfix]
-        public static void AddHoneypot(Player __instance)
-        {
-            if (__instance.gameObject.GetComponent<HoneypotComponent>() == null)
-            {
-                __instance.gameObject.AddComponent<HoneypotComponent>();
-            }
-        }
     }
 
     public class HoneypotComponent : NetworkBehaviour

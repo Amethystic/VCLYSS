@@ -10,9 +10,13 @@
 - Extended verification length - 10/14/25
 - Anticheat Integ Check Addition to minimize chances of bypassing - 10/17/25
 - Game update - 10/21/25
-- Bepinex update - [+] 10/6/25 / 6:34am
-- s0apy-PerfectAnti-1.1.0 -> Marioalexsan-PerfectGuard-1.1.0 - [+] 11/6/25
+- Bepinex update - 10/6/25 / 6:34am
+- s0apy-PerfectAnti-1.1.0 -> Marioalexsan-PerfectGuard-1.1.0 - 11/6/25
 - Improved Mod Validation/Configurations (Made it abide the thunderstore mod policy rules a little bit more + Made it able to also read names instead of just GUIDS) - [~] 11/5/25 / 9:43pm
+
+</details>
+
+<details><summary>Old Updates</summary>
 
 ## V2 - Refactory - Public Test Update (cont ^)
 - Fixes "Players getting railed on skill init still" FULLY
@@ -31,7 +35,7 @@
 - Fixed Verification Handling
 
 - In-Game Logical Actions fixes
-Example:
+  Example:
 + Too Fast?: Attempts to reset.
 + Cooldown modified?: Interrupts your sklill.
 + Died but revived by menu?: You will be unable to revive by a mod menu, use angela's tears instead.
@@ -71,10 +75,10 @@ Example:
 
 </details>
 
-##
-<details><summary>Silent Updates</summary>
+<details><summary>Mini Updates</summary>
 
-## Shh, these are silent updates - just fixes and stuff (Some might not be on here)
+## -
 - Cleaned for this update - 11/5/25
+- Bugfix - [x] 11/6/25 @ 8:02pm
 
 </details>
