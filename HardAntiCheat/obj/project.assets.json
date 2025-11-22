@@ -2811,7 +2811,7 @@
     "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages": {}
   },
   "project": {
-    "version": "2.2.9",
+    "version": "2.2.10",
     "restore": {
       "projectUniqueName": "D:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\HardAntiCheat.csproj",
       "projectName": "HardAntiCheat",
@@ -2853,7 +2853,7 @@
         "auditLevel": "low",
         "auditMode": "direct"
       },
-      "SdkAnalysisLevel": "9.0.300"
+      "SdkAnalysisLevel": "10.0.100"
     },
     "frameworks": {
       "netstandard2.1": {
@@ -2894,12 +2894,18 @@
         ],
         "assetTargetFallback": true,
         "warn": true,
+        "downloadDependencies": [
+          {
+            "name": "NETStandard.Library.Ref",
+            "version": "[2.1.0, 2.1.0]"
+          }
+        ],
         "frameworkReferences": {
           "NETStandard.Library": {
             "privateAssets": "all"
           }
         },
-        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.306\\RuntimeIdentifierGraph.json"
+        "runtimeIdentifierGraphPath": "C:\\Users\\soap\\.dotnet\\sdk\\10.0.100\\RuntimeIdentifierGraph.json"
       }
     }
   }

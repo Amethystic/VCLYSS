@@ -209,7 +209,7 @@ namespace HardAntiCheat
             HACEnforce = Config.Bind("1. General", "Enable Mod List Enforcement", false, "If true, the server will check connecting clients' mod lists against the rules below.");
             HACListType = Config.Bind("1. General", "Mod List Type", "blacklist", new ConfigDescription("Determines how the mod list is used.", new AcceptableValueList<string>("blacklist", "whitelist")));
             HACHandshakeFailAction = Config.Bind("1. General", "Handshake Fail Action", "kick", new ConfigDescription("The action to take if a client fails the integrity check or mod list check.", new AcceptableValueList<string>("kick", "ban")));
-            HACModList = Config.Bind("1. General", "Mod List (GUIDs or Names)", "some.banned.mod.guid,Another Banned Mod Name", "Comma-separated list of BepInEx plugin GUIDs or Names to use for the blacklist/whitelist.");
+            HACModList = Config.Bind("1. General", "Mod List (GUIDs or Names)", "example.one.mod,Example2Mod", "Comma-separated list of BepInEx plugin GUIDs or Names to use for the blacklist/whitelist.");
 
             EnableMovementChecks = Config.Bind("2. Movement Detections", "Enable Teleport/Distance Checks", true, "Checks the final result of player movement to catch physics-based speed hacks and teleports.");
             MaxEffectiveSpeed = Config.Bind("2. Movement Detections", "Max Effective Speed", 100f, "The maximum plausible speed (units per second) a player can move.");
@@ -262,10 +262,21 @@ namespace HardAntiCheat
             {
                 if (ulong.TryParse(Player._mainPlayer?._steamID, out ulong mySteamId) && request.TargetSteamID == mySteamId)
                 {
-                    Log.LogInfo("Received verification request from server. Computing composite integrity hash...");
-                    var modListings = Chainloader.PluginInfos.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Metadata.Name);
-                    string clientHash = HACIntegrity.GenerateClientCompositeHash(request.ChallengeToken, modListings);
-                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HandshakeResponse { ChallengeHash = clientHash, ModListings = modListings });
+                    Log.LogInfo("Received verification request from server. Gathering mod list...");
+                    
+                    // CLIENT SIDE: "Hey im running, This that mod."
+                    // We iterate Chainloader.PluginInfos to get the exact running mods
+                    Dictionary<string, string> myMods = new Dictionary<string, string>();
+                    foreach (var pluginInfo in Chainloader.PluginInfos)
+                    {
+                        if (!myMods.ContainsKey(pluginInfo.Key))
+                        {
+                            myMods.Add(pluginInfo.Key, pluginInfo.Value.Metadata.Name);
+                        }
+                    }
+
+                    string clientHash = HACIntegrity.GenerateClientCompositeHash(request.ChallengeToken, myMods);
+                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HandshakeResponse { ChallengeHash = clientHash, ModListings = myMods });
                 }
             }
         }
@@ -286,20 +297,31 @@ namespace HardAntiCheat
 
                         if (validationMode == "blacklist")
                         {
-                            var bannedMod = clientModListings.FirstOrDefault(mod => ManagedMods.Contains(mod.Key) || ManagedMods.Contains(mod.Value));
-                            if (bannedMod.Key != null)
+                            // SERVER SIDE: Check if any of the banned mods are present in the client's list
+                            // "If its a blacklisted one the host machine will be like 'Die'"
+                            foreach (string bannedEntry in ManagedMods)
                             {
-                                failed = true;
-                                reason = $"Handshake failed: Client has a banned mod (Name: {bannedMod.Value}, GUID: {bannedMod.Key}).";
+                                // Check by GUID (Key) or Name (Value)
+                                if (clientModListings.ContainsKey(bannedEntry) || clientModListings.ContainsValue(bannedEntry))
+                                {
+                                    failed = true;
+                                    string detectedName = clientModListings.ContainsKey(bannedEntry) ? clientModListings[bannedEntry] : "Unknown";
+                                    reason = $"Handshake failed: Blacklisted mod detected (GUID/Name: {bannedEntry} matched {detectedName}).";
+                                    break;
+                                }
                             }
                         }
                         else
                         {
-                            var unlistedMod = clientModListings.FirstOrDefault(mod => mod.Key != ModInfo.GUID && !ManagedMods.Contains(mod.Key) && !ManagedMods.Contains(mod.Value));
-                            if (unlistedMod.Key != null)
+                            // Whitelist logic: If client has a mod NOT in our trusted list (and not base game/modloader stuff)
+                            foreach (var mod in clientModListings)
                             {
-                                failed = true;
-                                reason = $"Handshake failed: Client has a non-whitelisted mod (Name: {unlistedMod.Value}, GUID: {unlistedMod.Key}).";
+                                if (mod.Key != ModInfo.GUID && !ManagedMods.Contains(mod.Key) && !ManagedMods.Contains(mod.Value))
+                                {
+                                    failed = true;
+                                    reason = $"Handshake failed: Client has a non-whitelisted mod (Name: {mod.Value}, GUID: {mod.Key}).";
+                                    break;
+                                }
                             }
                         }
 
@@ -313,6 +335,7 @@ namespace HardAntiCheat
 
                     if (verificationData.ExpectedHash == response.ChallengeHash)
                     {
+                        // "Ok thats cool, verified"
                         Instance.StopCoroutine(verificationData.KickCoroutine);
                         PendingVerification.Remove(senderSteamId);
                         VerifiedSteamIDs.Add(senderSteamId);

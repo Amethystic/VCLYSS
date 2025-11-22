@@ -1,6 +1,6 @@
 {
   "name": "HardAntiCheat",
-  "version_number": "2.2.10",
+  "version_number": "2.2.11",
   "website_url": "https://discord.gg/HgMtdpXYud",
   "description": "Anti-cheat plugin for Atlyss multiplayer. (In Public Testing)",
   "dependencies": [
