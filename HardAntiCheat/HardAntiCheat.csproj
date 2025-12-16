@@ -21,7 +21,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
-        <AtlyssPath>..\..\..\..\..\SteamLibrary\steamapps\common\ATLYSS</AtlyssPath>
+        <AtlyssPath>..\..\..\..\..\..\..\..\..\home\soap\.local\share\Steam\steamapps\common\ATLYSS</AtlyssPath>
         <AtlyssManaged>$(AtlyssPath)\ATLYSS_Data\Managed\</AtlyssManaged>
     </PropertyGroup>
 
@@ -48,10 +48,6 @@
         <Reference Include="$(AtlyssManaged)UnityEngine.TextRenderingModule.dll" Private="False"/>
         
         <PackageReference Include="Soggy_Pancake-CodeYapper" Version="2.0.0" Private="False" />
-        
-        <Reference Include="CodeTalker">
-          <HintPath>C:\Users\Richard\AppData\Roaming\com.kesomannen.gale\atlyss\profiles\Default\BepInEx\plugins\Soggy_Pancake-CodeYapper\CodeTalker.dll</HintPath>
-        </Reference>
     </ItemGroup>
 
     <ItemGroup>

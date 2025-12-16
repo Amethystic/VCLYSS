@@ -1,32 +1,27 @@
 {
   "format": 1,
   "restore": {
-    "D:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\HardAntiCheat.csproj": {}
+    "/run/media/soap/The Main Dr/Documents/CODE/Ours/HardAntiCheat/HardAntiCheat/HardAntiCheat.csproj": {}
   },
   "projects": {
-    "D:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\HardAntiCheat.csproj": {
-      "version": "2.2.10",
+    "/run/media/soap/The Main Dr/Documents/CODE/Ours/HardAntiCheat/HardAntiCheat/HardAntiCheat.csproj": {
+      "version": "2.2.11",
       "restore": {
-        "projectUniqueName": "D:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\HardAntiCheat.csproj",
+        "projectUniqueName": "/run/media/soap/The Main Dr/Documents/CODE/Ours/HardAntiCheat/HardAntiCheat/HardAntiCheat.csproj",
         "projectName": "HardAntiCheat",
-        "projectPath": "D:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\HardAntiCheat.csproj",
-        "packagesPath": "C:\\Users\\soap\\.nuget\\packages\\",
-        "outputPath": "D:\\Documents\\CODE\\Ours\\HardAntiCheat\\HardAntiCheat\\obj\\",
+        "projectPath": "/run/media/soap/The Main Dr/Documents/CODE/Ours/HardAntiCheat/HardAntiCheat/HardAntiCheat.csproj",
+        "packagesPath": "/home/soap/.nuget/packages/",
+        "outputPath": "/run/media/soap/The Main Dr/Documents/CODE/Ours/HardAntiCheat/HardAntiCheat/obj/",
         "projectStyle": "PackageReference",
-        "fallbackFolders": [
-          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
-        ],
         "configFilePaths": [
-          "D:\\Documents\\CODE\\Ours\\HardAntiCheat\\NuGet.Config",
-          "C:\\Users\\soap\\AppData\\Roaming\\NuGet\\NuGet.Config",
-          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
-          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+          "/run/media/soap/The Main Dr/Documents/CODE/Ours/HardAntiCheat/nuget.config",
+          "/home/soap/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "netstandard2.1"
         ],
         "sources": {
-          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "/usr/lib64/dotnet/library-packs": {},
           "https://api.nuget.org/v3/index.json": {},
           "https://nuget.bepinex.dev/v3/index.json": {},
           "https://nuget.windows10ce.com/nuget/v3/index.json": {}
@@ -47,7 +42,7 @@
           "auditLevel": "low",
           "auditMode": "direct"
         },
-        "SdkAnalysisLevel": "10.0.100"
+        "SdkAnalysisLevel": "9.0.100"
       },
       "frameworks": {
         "netstandard2.1": {
@@ -88,18 +83,12 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
-          "downloadDependencies": [
-            {
-              "name": "NETStandard.Library.Ref",
-              "version": "[2.1.0, 2.1.0]"
-            }
-          ],
           "frameworkReferences": {
             "NETStandard.Library": {
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Users\\soap\\.dotnet\\sdk\\10.0.100\\RuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "/usr/lib64/dotnet/sdk/9.0.112/RuntimeIdentifierGraph.json"
         }
       }
     }

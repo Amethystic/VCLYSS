@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("com.HardAntiCheat.sftwre")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("2.2.11.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("2.2.11+309afa6352c07724747210d3b4df071f19c15c3d")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("2.2.11+724a5a7f0c9fabde9a1ebb646f71e2e0ba767ba8")]
 [assembly: System.Reflection.AssemblyProductAttribute("HardAntiCheat")]
 [assembly: System.Reflection.AssemblyTitleAttribute("HardAntiCheat")]
 [assembly: System.Reflection.AssemblyVersionAttribute("2.2.11.0")]
