@@ -2,7 +2,7 @@
 
 <details><summary>Updates</summary>
 
-## 1.0.0
+## 1.0.0 - BETA
 - Initial release
 
 </details>
