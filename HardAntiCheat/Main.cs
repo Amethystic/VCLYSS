@@ -8,6 +8,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression; // Required for GZip
 using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -21,33 +22,169 @@ using UnityEngine.UI;
 
 namespace HardAntiCheat
 {
-    #region Custom Network Packets - UPGRADED
-    public class HAC_HandshakeRequest : PacketBase
+    #region Custom Network Packets - BINARY & COMPRESSED
+    public class HAC_HandshakeRequest : BinaryPacketBase
     {
-        public override string PacketSourceGUID => "HardAntiCheat";
-        [JsonProperty] public ulong TargetSteamID;
-        [JsonProperty] public string ChallengeToken;
-        [JsonProperty] public int ChallengeType;
+        public override string PacketSignature => "HardAntiCheat_HandshakeReq_GZ";
+        public ulong TargetSteamID { get; set; }
+        public string ChallengeToken { get; set; }
+        public int ChallengeType { get; set; }
+
+        public override byte[] Serialize()
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write(TargetSteamID);
+                    writer.Write(ChallengeToken ?? "");
+                    writer.Write(ChallengeType);
+                }
+                return ms.ToArray();
+            }
+        }
+
+        public override void Deserialize(byte[] data)
+        {
+            using (var ms = new MemoryStream(data))
+            {
+                using (var reader = new BinaryReader(ms))
+                {
+                    TargetSteamID = reader.ReadUInt64();
+                    ChallengeToken = reader.ReadString();
+                    ChallengeType = reader.ReadInt32();
+                }
+            }
+        }
     }
 
-    public class HAC_HandshakeResponse : PacketBase
+    public class HAC_HandshakeResponse : BinaryPacketBase
     {
-        public override string PacketSourceGUID => "HardAntiCheat";
-        [JsonProperty] public string ChallengeHash;
-        [JsonProperty] public Dictionary<string, string> ModListings;
+        public override string PacketSignature => "HardAntiCheat_HandshakeRes_GZ";
+        public string ChallengeHash { get; set; }
+        public Dictionary<string, string> ModListings { get; set; }
+
+        public override byte[] Serialize()
+        {
+            byte[] rawData;
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write(ChallengeHash ?? "");
+                    if (ModListings == null)
+                    {
+                        writer.Write(0);
+                    }
+                    else
+                    {
+                        writer.Write(ModListings.Count);
+                        foreach (var kvp in ModListings)
+                        {
+                            writer.Write(kvp.Key ?? "");
+                            writer.Write(kvp.Value ?? "");
+                        }
+                    }
+                }
+                rawData = ms.ToArray();
+            }
+
+            // Compress
+            using (var compressedMs = new MemoryStream())
+            {
+                using (var gzip = new GZipStream(compressedMs, CompressionMode.Compress))
+                {
+                    gzip.Write(rawData, 0, rawData.Length);
+                }
+                return compressedMs.ToArray();
+            }
+        }
+
+        public override void Deserialize(byte[] data)
+        {
+            // Decompress
+            using (var compressedMs = new MemoryStream(data))
+            using (var gzip = new GZipStream(compressedMs, CompressionMode.Decompress))
+            using (var rawMs = new MemoryStream())
+            {
+                gzip.CopyTo(rawMs);
+                rawMs.Position = 0;
+
+                using (var reader = new BinaryReader(rawMs))
+                {
+                    ChallengeHash = reader.ReadString();
+                    int count = reader.ReadInt32();
+                    ModListings = new Dictionary<string, string>();
+                    for (int i = 0; i < count; i++)
+                    {
+                        string key = reader.ReadString();
+                        string val = reader.ReadString();
+                        ModListings[key] = val;
+                    }
+                }
+            }
+        }
     }
     
-    public class HAC_HeartbeatRequest : PacketBase
+    public class HAC_HeartbeatRequest : BinaryPacketBase
     {
-        public override string PacketSourceGUID => "HardAntiCheat";
-        [JsonProperty] public ulong TargetSteamID;
-        [JsonProperty] public string ChallengeToken;
+        public override string PacketSignature => "HardAntiCheat_HeartbeatReq_GZ";
+        public ulong TargetSteamID { get; set; }
+        public string ChallengeToken { get; set; }
+
+        public override byte[] Serialize()
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write(TargetSteamID);
+                    writer.Write(ChallengeToken ?? "");
+                }
+                return ms.ToArray();
+            }
+        }
+
+        public override void Deserialize(byte[] data)
+        {
+            using (var ms = new MemoryStream(data))
+            {
+                using (var reader = new BinaryReader(ms))
+                {
+                    TargetSteamID = reader.ReadUInt64();
+                    ChallengeToken = reader.ReadString();
+                }
+            }
+        }
     }
 
-    public class HAC_HeartbeatResponse : PacketBase
+    public class HAC_HeartbeatResponse : BinaryPacketBase
     {
-        public override string PacketSourceGUID => "HardAntiCheat";
-        [JsonProperty] public string ChallengeHash;
+        public override string PacketSignature => "HardAntiCheat_HeartbeatRes_GZ";
+        public string ChallengeHash { get; set; }
+
+        public override byte[] Serialize()
+        {
+            using (var ms = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(ms))
+                {
+                    writer.Write(ChallengeHash ?? "");
+                }
+                return ms.ToArray();
+            }
+        }
+
+        public override void Deserialize(byte[] data)
+        {
+            using (var ms = new MemoryStream(data))
+            {
+                using (var reader = new BinaryReader(ms))
+                {
+                    ChallengeHash = reader.ReadString();
+                }
+            }
+        }
     }
     #endregion
 
@@ -247,16 +384,16 @@ namespace HardAntiCheat
             TrustedSteamIDs.SettingChanged += (s, e) => ParseWhitelist();
             HACModList.SettingChanged += (s, e) => ParseHACModList();
             
-            CodeTalkerNetwork.RegisterListener<HAC_HandshakeRequest>(OnClientReceivedHandshakeRequest);
-            CodeTalkerNetwork.RegisterListener<HAC_HandshakeResponse>(OnServerReceivedHandshakeResponse);
-            CodeTalkerNetwork.RegisterListener<HAC_HeartbeatRequest>(OnClientReceivedHeartbeatRequest);
-            CodeTalkerNetwork.RegisterListener<HAC_HeartbeatResponse>(OnServerReceivedHeartbeatResponse);
+            CodeTalkerNetwork.RegisterBinaryListener<HAC_HandshakeRequest>(OnClientReceivedHandshakeRequest);
+            CodeTalkerNetwork.RegisterBinaryListener<HAC_HandshakeResponse>(OnServerReceivedHandshakeResponse);
+            CodeTalkerNetwork.RegisterBinaryListener<HAC_HeartbeatRequest>(OnClientReceivedHeartbeatRequest);
+            CodeTalkerNetwork.RegisterBinaryListener<HAC_HeartbeatResponse>(OnServerReceivedHeartbeatResponse);
             
 			harmony.PatchAll();
 			Log.LogInfo($"[{ModInfo.NAME}] has been loaded. Infractions will be logged to: {InfractionLogPath}");
 		}
         
-        public static void OnClientReceivedHandshakeRequest(PacketHeader header, PacketBase packet)
+        public static void OnClientReceivedHandshakeRequest(PacketHeader header, BinaryPacketBase packet)
         {
             if (packet is HAC_HandshakeRequest request)
             {
@@ -276,12 +413,12 @@ namespace HardAntiCheat
                     }
 
                     string clientHash = HACIntegrity.GenerateClientCompositeHash(request.ChallengeToken, myMods);
-                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HandshakeResponse { ChallengeHash = clientHash, ModListings = myMods });
+                    CodeTalkerNetwork.SendBinaryNetworkPacket(new HAC_HandshakeResponse { ChallengeHash = clientHash, ModListings = myMods });
                 }
             }
         }
 
-        public static void OnServerReceivedHandshakeResponse(PacketHeader header, PacketBase packet)
+        public static void OnServerReceivedHandshakeResponse(PacketHeader header, BinaryPacketBase packet)
         {
             if (packet is HAC_HandshakeResponse response)
             {
@@ -355,7 +492,7 @@ namespace HardAntiCheat
             }
         }
 
-        public static void OnClientReceivedHeartbeatRequest(PacketHeader header, PacketBase packet)
+        public static void OnClientReceivedHeartbeatRequest(PacketHeader header, BinaryPacketBase packet)
         {
             if (packet is HAC_HeartbeatRequest request)
             {
@@ -363,12 +500,12 @@ namespace HardAntiCheat
                 {
                     var modListings = Chainloader.PluginInfos.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Metadata.Name);
                     string clientHash = HACIntegrity.GenerateClientCompositeHash(request.ChallengeToken, modListings);
-                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HeartbeatResponse { ChallengeHash = clientHash });
+                    CodeTalkerNetwork.SendBinaryNetworkPacket(new HAC_HeartbeatResponse { ChallengeHash = clientHash });
                 }
             }
         }
         
-        public static void OnServerReceivedHeartbeatResponse(PacketHeader header, PacketBase packet)
+        public static void OnServerReceivedHeartbeatResponse(PacketHeader header, BinaryPacketBase packet)
         {
             if (packet is HAC_HeartbeatResponse response)
             {
@@ -404,7 +541,7 @@ namespace HardAntiCheat
                     string expectedHash = HACIntegrity.GenerateClientCompositeHash(token, modListings);
                     
                     PendingHeartbeats[steamId] = expectedHash;
-                    CodeTalkerNetwork.SendNetworkPacket(new HAC_HeartbeatRequest { ChallengeToken = token, TargetSteamID = steamId });
+                    CodeTalkerNetwork.SendBinaryNetworkPacket(new HAC_HeartbeatRequest { ChallengeToken = token, TargetSteamID = steamId });
                 }
                 else
                 {
@@ -755,8 +892,11 @@ namespace HardAntiCheat
                             string token = Guid.NewGuid().ToString();
                             var serverModListings = Chainloader.PluginInfos.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Metadata.Name);
                             string expectedHash = HACIntegrity.GenerateClientCompositeHash(token, serverModListings);
+                            
+                            // UPDATED: Use SendBinaryNetworkPacket
                             var requestPacket = new HAC_HandshakeRequest { TargetSteamID = steamId, ChallengeToken = token, ChallengeType = 0 };
-                            CodeTalkerNetwork.SendNetworkPacket(requestPacket);
+                            CodeTalkerNetwork.SendBinaryNetworkPacket(requestPacket);
+                            
                             var kickCoroutine = Main.Instance.StartCoroutine(Main.Instance.KickClientAfterDelay(player));
                             Main.PendingVerification[steamId] = (expectedHash, kickCoroutine);
                         }
@@ -1279,7 +1419,7 @@ namespace HardAntiCheat
         {
             if (Main.EnableIntegrityChecks.Value)
             {
-                CodeTalkerNetwork.RegisterListener<HAC_HandshakeResponse>(Main.OnServerReceivedHandshakeResponse);
+                CodeTalkerNetwork.RegisterBinaryListener<HAC_HandshakeResponse>(Main.OnServerReceivedHandshakeResponse);
                 Main.Log.LogInfo("HAC Server-side integrity check handler registered.");
 
                 if (SteamUser.GetSteamID() is CSteamID steamId && steamId.IsValid())

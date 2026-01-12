@@ -12,7 +12,8 @@
 - Bepinex update - 10/6/25 / 6:34am
 - s0apy-PerfectAnti-1.1.0 -> Marioalexsan-PerfectGuard-1.1.0 - 11/6/25
 - Improved Mod Validation/Configurations (Made it abide the thunderstore mod policy rules a little bit more + Made it able to also read names instead of just GUIDS) - [+] 11/22/25 / 10:52am
- 
+- Codetalker Update - 1/11/26
+
 </details>
 
 <details><summary>Old Updates</summary>
