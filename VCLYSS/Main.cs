@@ -26,16 +26,15 @@ namespace VCLYSS
     [BepInDependency("CodeTalker")]
 	public class Main : BaseUnityPlugin
 	{
-		private readonly Harmony harmony = new Harmony(ModInfo.GUID);
-		internal static ManualLogSource Log;
-        public static Main Instance { get; private set; }
+		private readonly Harmony _harmony = new Harmony(ModInfo.GUID);
+		internal static ManualLogSource? Log;
+        public static Main? Instance { get; private set; }
 		
 		private void Awake()
 		{
             Instance = this;
 			Log = Logger;
-            
-			harmony.PatchAll();
+			_harmony.PatchAll();
 		}
 	}
 }
