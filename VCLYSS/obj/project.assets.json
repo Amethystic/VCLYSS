@@ -170,6 +170,15 @@
           }
         }
       },
+      "Nessie-EasySettings/1.1.8": {
+        "type": "package",
+        "compile": {
+          "lib/netstandard2.0/EasySettings.dll": {}
+        },
+        "runtime": {
+          "lib/netstandard2.0/EasySettings.dll": {}
+        }
+      },
       "Soggy_Pancake-CodeYapper/2.0.0": {
         "type": "package",
         "compile": {
@@ -903,6 +912,17 @@
         "lib/netstandard2.0/MonoMod.Utils.xml",
         "monomod.utils.21.12.13.1.nupkg.sha512",
         "monomod.utils.nuspec"
+      ]
+    },
+    "Nessie-EasySettings/1.1.8": {
+      "sha512": "8de1uWIwXTBq8LeGrlA/sJRoAuQFSL71zLSilU1x60tN+3j1tL5nfM+qPCtD8omF9qizUQt3im8oSsTcHw2qug==",
+      "type": "package",
+      "path": "nessie-easysettings/1.1.8",
+      "files": [
+        ".nupkg.metadata",
+        "lib/netstandard2.0/EasySettings.dll",
+        "nessie-easysettings.1.1.8.nupkg.sha512",
+        "nessie-easysettings.nuspec"
       ]
     },
     "Soggy_Pancake-CodeYapper/2.0.0": {
@@ -2802,6 +2822,7 @@
       "BepInEx.Analyzers >= 1.*",
       "BepInEx.AssemblyPublicizer.MSBuild >= 0.4.2",
       "BepInEx.Core >= 5.4.*",
+      "Nessie-EasySettings >= 1.1.8",
       "Soggy_Pancake-CodeYapper >= 2.0.0",
       "UnityEngine.Modules >= 2022.3.62"
     ]
@@ -2810,7 +2831,7 @@
     "/home/soap/.nuget/packages/": {}
   },
   "project": {
-    "version": "2.2.12",
+    "version": "1.0.0",
     "restore": {
       "projectUniqueName": "/run/media/soap/The Main Dr/Documents/CODE/Ours/VCLYSS/VCLYSS/VCLYSS.csproj",
       "projectName": "VCLYSS",
@@ -2866,6 +2887,10 @@
           "BepInEx.Core": {
             "target": "Package",
             "version": "[5.4.*, )"
+          },
+          "Nessie-EasySettings": {
+            "target": "Package",
+            "version": "[1.1.8, )"
           },
           "Soggy_Pancake-CodeYapper": {
             "target": "Package",

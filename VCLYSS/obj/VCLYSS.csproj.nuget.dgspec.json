@@ -5,7 +5,7 @@
   },
   "projects": {
     "/run/media/soap/The Main Dr/Documents/CODE/Ours/VCLYSS/VCLYSS/VCLYSS.csproj": {
-      "version": "2.2.12",
+      "version": "1.0.0",
       "restore": {
         "projectUniqueName": "/run/media/soap/The Main Dr/Documents/CODE/Ours/VCLYSS/VCLYSS/VCLYSS.csproj",
         "projectName": "VCLYSS",
@@ -61,6 +61,10 @@
             "BepInEx.Core": {
               "target": "Package",
               "version": "[5.4.*, )"
+            },
+            "Nessie-EasySettings": {
+              "target": "Package",
+              "version": "[1.1.8, )"
             },
             "Soggy_Pancake-CodeYapper": {
               "target": "Package",

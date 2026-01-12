@@ -10,6 +10,6 @@
 <details><summary>Mini Updates</summary>
 
 ## -
-- shh i branched off HAC
+- shh, I branched off HAC
 
 </details>

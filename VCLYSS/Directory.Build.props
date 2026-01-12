@@ -11,7 +11,7 @@
         <CreateThunderstorePackage>true</CreateThunderstorePackage>
         <ThunderstorePackageName>VCLYSS</ThunderstorePackageName>
         <ThunderstoreTeamName>s0apy</ThunderstoreTeamName>
-        <ThunderstorePackageDescription>Anti-cheat plugin for Atlyss multiplayer. (In Public Testing)</ThunderstorePackageDescription>
+        <ThunderstorePackageDescription>Voice Chat plugin for Atlyss multiplayer. (In Public Testing)</ThunderstorePackageDescription>
         <ThunderstoreWebsite>https://discord.gg/HgMtdpXYud</ThunderstoreWebsite>
     </PropertyGroup>
     <ItemGroup>
@@ -19,8 +19,7 @@
         <ThunderstoreDependency Include="BepInEx-BepInExPack-5.4.2304" Visible="false"/>
         <ThunderstoreDependency Include="Marioalexsan-PerfectGuard-1.1.0" Visible="false"/>
         <ThunderstoreDependency Include="Soggy_Pancake-CodeYapper-2.0.0" Visible="false"/>
-        <!--<ThunderstoreDependency Include="Marioalexsan-PerfectGuard-1.0.0" Visible="false"/>/>-->
-        <!--<ThunderstoreDependency Include="Nessie-EasySettings-1.1.8" Visible="false" />-->
+        <ThunderstoreDependency Include="Nessie-EasySettings-1.1.8" Visible="false" />
 
         <!-- Output items to include from build assemblies -->
         <ThunderstoreAssemblyInclude Include="$(AssemblyName).dll" Visible="false"/>
