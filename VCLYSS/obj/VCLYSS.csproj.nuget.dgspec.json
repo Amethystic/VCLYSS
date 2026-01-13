@@ -64,7 +64,7 @@
             },
             "Nessie-EasySettings": {
               "target": "Package",
-              "version": "[1.2.1, )"
+              "version": "[1.2.0, )"
             },
             "Soggy_Pancake-CodeYapper": {
               "target": "Package",

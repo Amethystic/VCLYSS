@@ -3,7 +3,7 @@
     <PropertyGroup>
         <Authors>com.VCLYSS.sftwre</Authors>
         <Product>VCLYSS</Product>
-        <Version>1.0.0000</Version>
+        <Version>1.0.0</Version>
         <PackageId>VCLYSS</PackageId>
     </PropertyGroup>
 
@@ -47,7 +47,7 @@
         <Reference Include="$(AtlyssManaged)UnityEngine.InputLegacyModule.dll" Private="False"/>
         <Reference Include="$(AtlyssManaged)UnityEngine.TextRenderingModule.dll" Private="False"/>
         <PackageReference Include="Soggy_Pancake-CodeYapper" Version="2.0.0" Private="False" />
-        <PackageReference Include="Nessie-EasySettings" Version="1.2.1" Private="False" />
+        <PackageReference Include="Nessie-EasySettings" Version="1.2.0" Private="False" />
     </ItemGroup>
 
     <ItemGroup>

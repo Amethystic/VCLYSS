@@ -17,7 +17,6 @@ namespace VCLYSS
 {
     [BepInPlugin(ModInfo.GUID, ModInfo.NAME, ModInfo.VERSION)]
     [BepInDependency("CodeTalker")]
-    [BepInDependency("com.nessie.easysettings")]
     public class Main : BaseUnityPlugin
     {
         public static Main Instance;

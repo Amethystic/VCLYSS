@@ -170,7 +170,7 @@
           }
         }
       },
-      "Nessie-EasySettings/1.2.1": {
+      "Nessie-EasySettings/1.2.0": {
         "type": "package",
         "compile": {
           "lib/netstandard2.0/EasySettings.dll": {}
@@ -914,14 +914,14 @@
         "monomod.utils.nuspec"
       ]
     },
-    "Nessie-EasySettings/1.2.1": {
-      "sha512": "Ornytj1k5vDwUefiQRfzmeFC24WZr2PpyyQlpEoZF5pmDWLamD6dMXcWgKgRV3IsTsttISB2MPt3CRogocBihQ==",
+    "Nessie-EasySettings/1.2.0": {
+      "sha512": "mpK+v1IAcOqHvh/bbQi8yW34QEiPIm+m2SPb7Q2vdNkn+osNapczWUeBgb4UxwJ4vpvMHRpeic2L72eBMsmIDw==",
       "type": "package",
-      "path": "nessie-easysettings/1.2.1",
+      "path": "nessie-easysettings/1.2.0",
       "files": [
         ".nupkg.metadata",
         "lib/netstandard2.0/EasySettings.dll",
-        "nessie-easysettings.1.2.1.nupkg.sha512",
+        "nessie-easysettings.1.2.0.nupkg.sha512",
         "nessie-easysettings.nuspec"
       ]
     },
@@ -2822,7 +2822,7 @@
       "BepInEx.Analyzers >= 1.*",
       "BepInEx.AssemblyPublicizer.MSBuild >= 0.4.2",
       "BepInEx.Core >= 5.4.*",
-      "Nessie-EasySettings >= 1.2.1",
+      "Nessie-EasySettings >= 1.2.0",
       "Soggy_Pancake-CodeYapper >= 2.0.0",
       "UnityEngine.Modules >= 2022.3.62"
     ]
@@ -2890,7 +2890,7 @@
           },
           "Nessie-EasySettings": {
             "target": "Package",
-            "version": "[1.2.1, )"
+            "version": "[1.2.0, )"
           },
           "Soggy_Pancake-CodeYapper": {
             "target": "Package",
