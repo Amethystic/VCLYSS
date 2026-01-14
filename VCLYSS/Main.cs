@@ -8,9 +8,9 @@ using UnityEngine;
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using CodeTalker; // Needed for Compressors
+using CodeTalker; 
 using Nessie.ATLYSS.EasySettings;
-using CompressionLevel = System.IO.Compression.CompressionLevel; // Needed for CompressionLevel
+using CompressionLevel = System.IO.Compression.CompressionLevel; 
 
 namespace VCLYSS
 {
@@ -122,7 +122,7 @@ namespace VCLYSS
     }
 
     // -----------------------------------------------------------
-    // GLOBAL SYSTEM
+    // GLOBAL SYSTEM (Scanner & Router)
     // -----------------------------------------------------------
     public class VoiceSystem : MonoBehaviour
     {
@@ -175,7 +175,7 @@ namespace VCLYSS
             {
                 if (ActiveManagers[i].OwnerID == steamID) return ActiveManagers[i];
             }
-            // Fallback
+            // Fallback: Lazy Load
             Player[] players = FindObjectsOfType<Player>();
             foreach(var p in players) 
             {
@@ -211,19 +211,24 @@ namespace VCLYSS
         public ulong OwnerID;
         public bool IsLocalPlayer = false;
 
+        // --- AUDIO COMPONENTS ---
         private AudioSource _audioSource;
         private GameObject _bubbleObject;
         private SpriteRenderer _bubbleRenderer;
         private LipSync _lipSync;
 
+        // --- STEAM BUFFERS ---
         private byte[] _compressedBuffer = new byte[8192]; 
         private byte[] _decompressedBuffer = new byte[65536]; 
 
+        // --- RING BUFFER ---
         private float[] _floatBuffer; 
         private int _writePos = 0;
         private int _bufferLength; 
         private AudioClip _streamingClip;
+        private int _sampleRate;
 
+        // --- STATE ---
         private bool _isRecording = false;
         private float _lastVolume = 0f;
         private bool _isToggleOn = false;
@@ -260,6 +265,8 @@ namespace VCLYSS
             }
         }
 
+        // --- SETUP ---
+
         private void InitializeAudio()
         {
             GameObject emitter = new GameObject("VoiceEmitter");
@@ -267,14 +274,14 @@ namespace VCLYSS
             emitter.transform.localPosition = new Vector3(0, 1.7f, 0); 
 
             _audioSource = emitter.AddComponent<AudioSource>();
-            _audioSource.loop = true;
+            _audioSource.loop = true; // Necessary for Ring Buffer
             _audioSource.playOnAwake = true;
             
-            int sampleRate = (int)SteamUser.GetVoiceOptimalSampleRate();
-            _bufferLength = sampleRate * 5; 
+            _sampleRate = (int)SteamUser.GetVoiceOptimalSampleRate();
+            _bufferLength = _sampleRate * 2; // 2 Seconds Buffer (Short enough for realtime, long enough for jitter)
             _floatBuffer = new float[_bufferLength];
             
-            _streamingClip = AudioClip.Create($"Voice_{OwnerID}", _bufferLength, 1, sampleRate, false);
+            _streamingClip = AudioClip.Create($"Voice_{OwnerID}", _bufferLength, 1, _sampleRate, false);
             _audioSource.clip = _streamingClip;
             _audioSource.Play(); 
             
@@ -296,6 +303,7 @@ namespace VCLYSS
         public void ApplyAudioSettings()
         {
             if (_audioSource == null) return;
+            
             _audioSource.volume = Main.CfgMasterVolume.Value;
             
             if (IsLocalPlayer) 
@@ -304,12 +312,16 @@ namespace VCLYSS
             }
             else
             {
+                // STRICTLY USING SUPPORTED API
                 _audioSource.spatialBlend = Main.CfgSpatialBlending.Value ? 1.0f : 0.0f;
                 _audioSource.minDistance = Main.CfgMinDistance.Value;
                 _audioSource.maxDistance = Main.CfgMaxDistance.Value;
                 _audioSource.rolloffMode = AudioRolloffMode.Logarithmic;
+                // Do NOT use minVolume, maxVolume, or rolloffFactor
             }
         }
+
+        // --- THE LOOP ---
 
         void Update()
         {
@@ -364,7 +376,6 @@ namespace VCLYSS
                         }
                         else
                         {
-                            // --- SENDING WITH GZIP COMPRESSION ---
                             var packet = new VoicePacket(packetData);
                             
                             CodeTalkerNetwork.SendNetworkPacket(
@@ -382,16 +393,17 @@ namespace VCLYSS
             }
         }
 
+        // --- THE RECEIVER ---
+
         public void ReceiveNetworkData(byte[] compressedData)
         {
             if (IsLocalPlayer && !Main.CfgMicTest.Value) return; 
 
-            // Steam Audio Decoding (Required for playback)
             uint bytesWritten;
             EVoiceResult res = SteamUser.DecompressVoice(
                 compressedData, (uint)compressedData.Length,
                 _decompressedBuffer, (uint)_decompressedBuffer.Length,
-                out bytesWritten, SteamUser.GetVoiceOptimalSampleRate()
+                out bytesWritten, (uint)_sampleRate
             );
 
             if (res == EVoiceResult.k_EVoiceResultOK && bytesWritten > 0)
@@ -406,6 +418,7 @@ namespace VCLYSS
             int sampleCount = length / 2; 
             float maxVol = 0f;
             
+            // 1. Write Audio Data
             for (int i = 0; i < sampleCount; i++)
             {
                 short val = BitConverter.ToInt16(rawBytes, i * 2);
@@ -418,22 +431,36 @@ namespace VCLYSS
                 if (absVol > maxVol) maxVol = absVol;
             }
 
+            // 2. Write Silence Ahead (Anti-Loop / Realtime Fix)
+            // Clear 0.15s ahead of the write head to prevent looping old audio
+            int silenceSamples = _sampleRate / 6; 
+            int clearStart = _writePos;
+            for (int i = 0; i < silenceSamples; i++)
+            {
+                _floatBuffer[(clearStart + i) % _bufferLength] = 0f;
+            }
+
             _lastVolume = Mathf.Lerp(_lastVolume, maxVol, Time.deltaTime * 10f);
 
+            // 3. Update Clip
             _streamingClip.SetData(_floatBuffer, 0);
 
+            // 4. Sync Playback
             if (!_audioSource.isPlaying) _audioSource.Play();
             
             int playPos = _audioSource.timeSamples;
             int dist = (_writePos - playPos + _bufferLength) % _bufferLength;
             
-            if (dist > 24000) 
+            // If the write head is too far ahead (>0.15s), snap playhead closer
+            if (dist > (_sampleRate / 6)) 
             {
-                int newPos = _writePos - 2000;
+                int newPos = _writePos - (_sampleRate / 20); // Snap to 0.05s behind
                 if (newPos < 0) newPos += _bufferLength;
                 _audioSource.timeSamples = newPos;
             }
         }
+
+        // --- VISUALS ---
 
         private void UpdateVisuals()
         {
@@ -464,6 +491,8 @@ namespace VCLYSS
         }
 
         public bool IsSpeaking() => _lastVolume > 0.01f;
+
+        // --- UTILS ---
 
         private void CheckLocalPlayerStatus()
         {
