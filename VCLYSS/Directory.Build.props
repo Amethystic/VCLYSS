@@ -11,7 +11,7 @@
         <CreateThunderstorePackage>true</CreateThunderstorePackage>
         <ThunderstorePackageName>VCLYSS</ThunderstorePackageName>
         <ThunderstoreTeamName>s0apy</ThunderstoreTeamName>
-        <ThunderstorePackageDescription>Voice Chat plugin for Atlyss multiplayer. (In Public Testing)</ThunderstorePackageDescription>
+        <ThunderstorePackageDescription>Voice Chat plugin for Atlyss multiplayer.</ThunderstorePackageDescription>
         <ThunderstoreWebsite>https://discord.gg/HgMtdpXYud</ThunderstoreWebsite>
     </PropertyGroup>
     <ItemGroup>
