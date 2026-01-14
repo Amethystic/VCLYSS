@@ -1,10 +1,12 @@
 ﻿using BepInEx;
 using BepInEx.Logging;
 using BepInEx.Configuration;
+using HarmonyLib;
 using CodeTalker.Networking;
 using CodeTalker.Packets;
 using Steamworks;
 using UnityEngine;
+using UnityEngine.Audio;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -22,6 +24,7 @@ namespace VCLYSS
     {
         public static Main Instance;
         internal static ManualLogSource Log;
+        private Harmony _harmony;
 
         // --- CONFIGURATION ---
         public static ConfigEntry<bool> CfgEnabled;
@@ -36,6 +39,7 @@ namespace VCLYSS
         public static ConfigEntry<bool> CfgSpatialBlending; 
         public static ConfigEntry<bool> CfgShowOverlay;
         public static ConfigEntry<bool> CfgShowHeadIcons;
+        public static ConfigEntry<bool> CfgShowRangeVisual; // New: Toggle the red ring
         public static ConfigEntry<bool> CfgLipSync; 
         public enum MicMode { PushToTalk, Toggle, AlwaysOn }
 
@@ -47,6 +51,9 @@ namespace VCLYSS
             InitConfig();
             Settings.OnInitialized.AddListener(AddSettings);
             Settings.OnApplySettings.AddListener(() => { Config.Save(); VoiceSystem.ApplySettingsToAll(); });
+
+            _harmony = new Harmony(ModInfo.GUID);
+            _harmony.PatchAll();
 
             StartCoroutine(RegisterPacketDelayed());
 
@@ -76,17 +83,25 @@ namespace VCLYSS
         private void InitConfig()
         {
             CfgEnabled = Config.Bind("1. General", "Voice Chat Active", true, "Master Switch");
-            CfgMasterVolume = Config.Bind("1. General", "Master Volume", 1.5f, new ConfigDescription("Incoming Voice Volume", new AcceptableValueRange<float>(0.1f, 5.0f)));
+            
+            // VOLUME FIX: Range 0-5. Logic ensures 0 is silent.
+            CfgMasterVolume = Config.Bind("1. General", "Master Volume", 1.0f, new ConfigDescription("Incoming Voice Volume Boost (0 = Mute)", new AcceptableValueRange<float>(0.0f, 5.0f)));
+            
             CfgMuteAll = Config.Bind("1. General", "Mute Everyone (Panic)", false, "Panic button to silence all incoming voice");
             CfgMicMode = Config.Bind("2. Input", "Input Mode", MicMode.PushToTalk, "Input Method");
             CfgPushToTalk = Config.Bind("2. Input", "Push To Talk Key", KeyCode.V, "Bind for PTT/Toggle");
             CfgMicThreshold = Config.Bind("2. Input", "Mic Activation Threshold", 0.05f, new ConfigDescription("Gate threshold", new AcceptableValueRange<float>(0.0f, 0.5f)));
             CfgMicTest = Config.Bind("2. Input", "Mic Test (Loopback)", false, "Hear your own voice to test settings");
-            CfgMinDistance = Config.Bind("3. Spatial", "Min Distance", 1.0f, new ConfigDescription("Loud Zone", new AcceptableValueRange<float>(0.1f, 10.0f)));
-            CfgMaxDistance = Config.Bind("3. Spatial", "Max Distance", 25.0f, new ConfigDescription("Falloff Zone", new AcceptableValueRange<float>(5.0f, 100.0f)));
+            
+            // SPATIAL RANGE INCREASED
+            CfgMinDistance = Config.Bind("3. Spatial", "Min Distance", 5.0f, new ConfigDescription("Distance where audio is 100% volume", new AcceptableValueRange<float>(1.0f, 50.0f)));
+            CfgMaxDistance = Config.Bind("3. Spatial", "Max Distance", 40.0f, new ConfigDescription("Distance where audio becomes silent", new AcceptableValueRange<float>(10.0f, 256.0f)));
+            
             CfgSpatialBlending = Config.Bind("3. Spatial", "3D Spatial Audio", true, "Enable 3D Directional Audio");
+            
             CfgShowOverlay = Config.Bind("4. Visuals", "Show Voice Overlay", true, "Show list of speakers in top right");
             CfgShowHeadIcons = Config.Bind("4. Visuals", "Show Head Icons (Bubble)", true, "Show GMod-style bubble");
+            CfgShowRangeVisual = Config.Bind("4. Visuals", "Show Earmuff Visual", false, "Shows a red ring indicating hearing range");
             CfgLipSync = Config.Bind("4. Visuals", "Enable Lip Sync", true, "Animate mouths when talking");
         }
 
@@ -106,6 +121,7 @@ namespace VCLYSS
             tab.AddToggle(CfgSpatialBlending);
             tab.AddSlider(CfgMinDistance);
             tab.AddSlider(CfgMaxDistance);
+            tab.AddToggle(CfgShowRangeVisual); // Added visual toggle
             tab.AddHeader("Visuals");
             tab.AddToggle(CfgShowOverlay);
             tab.AddToggle(CfgShowHeadIcons);
@@ -130,7 +146,9 @@ namespace VCLYSS
     {
         public static VoiceSystem Instance;
         public static List<VoiceManager> ActiveManagers = new List<VoiceManager>();
-        private HashSet<ulong> _mutedPlayers = new HashSet<ulong>();
+        
+        // HOST CHECK FLAG
+        public static bool IsVoiceAllowedInLobby = false;
 
         void Awake() 
         { 
@@ -150,7 +168,6 @@ namespace VCLYSS
                     {
                         if (p != null && p.GetComponent<VoiceManager>() == null)
                         {
-                            Main.Log.LogInfo($"[Scanner] Attaching VoiceManager to {p._nickname}");
                             p.gameObject.AddComponent<VoiceManager>();
                         }
                     }
@@ -162,7 +179,7 @@ namespace VCLYSS
 
         public void RoutePacket(ulong senderID, byte[] data)
         {
-            if (!Main.CfgEnabled.Value || Main.CfgMuteAll.Value || _mutedPlayers.Contains(senderID)) return;
+            if (!Main.CfgEnabled.Value || Main.CfgMuteAll.Value || !IsVoiceAllowedInLobby) return;
 
             VoiceManager target = FindManager(senderID);
             if (target != null)
@@ -177,7 +194,6 @@ namespace VCLYSS
             {
                 if (ActiveManagers[i].OwnerID == steamID) return ActiveManagers[i];
             }
-            // Fallback: Lazy Load
             Player[] players = FindObjectsOfType<Player>();
             foreach(var p in players) 
             {
@@ -201,6 +217,61 @@ namespace VCLYSS
         public static void ApplySettingsToAll()
         {
             foreach(var vm in ActiveManagers) vm.ApplyAudioSettings();
+            EarmuffVisualizer.UpdateVisuals();
+        }
+    }
+
+    // -----------------------------------------------------------
+    // LOBBY PATCHES (Host Requirement)
+    // -----------------------------------------------------------
+    [HarmonyPatch]
+    public class LobbyPatches
+    {
+        private const string LOBBY_KEY = "vclyss_version";
+
+        [HarmonyPatch(typeof(SteamMatchmaking), nameof(SteamMatchmaking.JoinLobby))]
+        [HarmonyPostfix]
+        public static void OnJoinLobby(CSteamID steamIDLobby)
+        {
+            Main.Instance.StartCoroutine(CheckLobbyStatus(steamIDLobby));
+        }
+
+        [HarmonyPatch(typeof(SteamMatchmaking), nameof(SteamMatchmaking.CreateLobby))]
+        [HarmonyPostfix]
+        public static void OnCreateLobby()
+        {
+            Main.Instance.StartCoroutine(SetLobbyStatus());
+        }
+
+        private static IEnumerator SetLobbyStatus()
+        {
+            yield return new WaitForSeconds(1.0f);
+            CSteamID currentLobby = new CSteamID(SteamLobby._current._currentLobbyID);
+            
+            if (currentLobby.m_SteamID != 0 && Main.CfgEnabled.Value)
+            {
+                SteamMatchmaking.SetLobbyData(currentLobby, LOBBY_KEY, ModInfo.VERSION);
+                VoiceSystem.IsVoiceAllowedInLobby = true;
+                Main.Log.LogInfo("Host Lobby Created: Voice Chat ENABLED.");
+            }
+        }
+
+        private static IEnumerator CheckLobbyStatus(CSteamID lobbyId)
+        {
+            yield return new WaitForSeconds(2.0f);
+            string value = SteamMatchmaking.GetLobbyData(lobbyId, LOBBY_KEY);
+
+            if (!string.IsNullOrEmpty(value) && Main.CfgEnabled.Value)
+            {
+                VoiceSystem.IsVoiceAllowedInLobby = true;
+                Main.Log.LogInfo($"Joined Modded Lobby (Host Ver: {value}): Voice Chat ENABLED.");
+            }
+            else
+            {
+                VoiceSystem.IsVoiceAllowedInLobby = false;
+                SteamUser.StopVoiceRecording();
+                Main.Log.LogInfo("Voice Chat DISABLED (Host does not have the mod).");
+            }
         }
     }
 
@@ -213,30 +284,27 @@ namespace VCLYSS
         public ulong OwnerID;
         public bool IsLocalPlayer = false;
 
-        // --- AUDIO COMPONENTS ---
         private AudioSource _audioSource;
         private GameObject _bubbleObject;
         private SpriteRenderer _bubbleRenderer;
         private LipSync _lipSync;
+        private EarmuffVisualizer _earmuffVis;
+        
+        private static AudioMixerGroup _cachedVoiceMixer;
 
-        // --- BUFFERS ---
         private byte[] _compressedBuffer = new byte[8192]; 
         private byte[] _decompressedBuffer = new byte[65536]; 
 
-        // --- RING BUFFER ---
         private float[] _floatBuffer; 
         private int _writePos = 0;
         private int _bufferLength; 
         private AudioClip _streamingClip;
         private int _sampleRate;
 
-        // --- STATE ---
         private bool _isRecording = false;
         private float _lastVolume = 0f;
         private bool _isToggleOn = false;
         private bool _wasKeyDown = false;
-        
-        // --- TIMEOUT TRACKING (Fixes Looping) ---
         private float _lastPacketTime = 0f;
         private bool _isPlaying = false;
         private bool _audioInitialized = false;
@@ -245,18 +313,12 @@ namespace VCLYSS
         {
             AttachedPlayer = GetComponent<Player>();
             if (AttachedPlayer == null) { Destroy(this); return; }
-
-            // Don't initialize audio yet, wait for SteamID
             StartCoroutine(WaitForSteamID());
         }
 
         private IEnumerator WaitForSteamID()
         {
-            // Wait until SteamID is populated
-            while (VoiceSystem.GetSteamIDFromPlayer(AttachedPlayer) == 0)
-            {
-                yield return new WaitForSeconds(0.5f);
-            }
+            while (VoiceSystem.GetSteamIDFromPlayer(AttachedPlayer) == 0) yield return new WaitForSeconds(0.5f);
 
             OwnerID = VoiceSystem.GetSteamIDFromPlayer(AttachedPlayer);
             VoiceSystem.ActiveManagers.Add(this);
@@ -268,26 +330,16 @@ namespace VCLYSS
             _lipSync.Initialize(AttachedPlayer);
             
             _audioInitialized = true;
-            Main.Log.LogInfo($"[VoiceManager] Initialized on {AttachedPlayer._nickname} (ID: {OwnerID})");
-            
             CheckLocalPlayerStatus();
         }
 
-        void Start()
-        {
-            if (_audioInitialized) CheckLocalPlayerStatus();
-        }
+        void Start() { if (_audioInitialized) CheckLocalPlayerStatus(); }
 
         void OnDestroy()
         {
             VoiceSystem.ActiveManagers.Remove(this);
-            if (IsLocalPlayer && _isRecording)
-            {
-                SteamUser.StopVoiceRecording();
-            }
+            if (IsLocalPlayer && _isRecording) SteamUser.StopVoiceRecording();
         }
-
-        // --- SETUP ---
 
         private void InitializeAudio()
         {
@@ -296,11 +348,26 @@ namespace VCLYSS
             emitter.transform.localPosition = new Vector3(0, 1.7f, 0); 
 
             _audioSource = emitter.AddComponent<AudioSource>();
-            _audioSource.loop = true; // Ring buffer requires loop
+            _audioSource.loop = true; 
             _audioSource.playOnAwake = false;
+            _audioSource.dopplerLevel = 0f; // No Doppler
+
+            if (_cachedVoiceMixer == null)
+            {
+                AudioMixerGroup[] groups = Resources.FindObjectsOfTypeAll<AudioMixerGroup>();
+                foreach (var g in groups)
+                {
+                    if (g.name.IndexOf("Voice", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        _cachedVoiceMixer = g;
+                        break;
+                    }
+                }
+            }
+            if (_cachedVoiceMixer != null) _audioSource.outputAudioMixerGroup = _cachedVoiceMixer;
             
             _sampleRate = (int)SteamUser.GetVoiceOptimalSampleRate();
-            _bufferLength = _sampleRate * 2; // 2 Second Buffer
+            _bufferLength = _sampleRate * 2; 
             _floatBuffer = new float[_bufferLength];
             
             _streamingClip = AudioClip.Create($"Voice_{OwnerID}", _bufferLength, 1, _sampleRate, false);
@@ -313,51 +380,32 @@ namespace VCLYSS
         {
             _bubbleObject = new GameObject("VoiceBubble");
             _bubbleObject.transform.SetParent(transform, false);
-            
-            // Raised to 3.8f (Requested adjustment)
             _bubbleObject.transform.localPosition = new Vector3(0, 3.8f, 0); 
             
             _bubbleRenderer = _bubbleObject.AddComponent<SpriteRenderer>();
-            
-            // --- LOAD EMBEDDED RESOURCE ---
             _bubbleRenderer.sprite = LoadVoiceSprite(); 
             _bubbleRenderer.color = Color.white; 
             _bubbleObject.SetActive(false);
         }
 
-        // --- EMBEDDED RESOURCE LOADER ---
         private Sprite LoadVoiceSprite()
         {
             try 
             {
                 var assembly = Assembly.GetExecutingAssembly();
                 string resourceName = "VCLYSS.Icons.Voice.png";
-
                 using (Stream stream = assembly.GetManifestResourceStream(resourceName))
                 {
                     if (stream != null)
                     {
                         byte[] buffer = new byte[stream.Length];
                         stream.Read(buffer, 0, buffer.Length);
-                        
                         Texture2D tex = new Texture2D(2, 2);
-                        if (tex.LoadImage(buffer))
-                        {
-                            return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
-                        }
-                    }
-                    else
-                    {
-                        Main.Log.LogWarning($"Resource '{resourceName}' not found. Check Embedded Resource settings.");
+                        if (tex.LoadImage(buffer)) return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
                     }
                 }
             }
-            catch (Exception e)
-            {
-                Main.Log.LogError($"Failed to load embedded Voice.png: {e.Message}");
-            }
-
-            // Fallback: Procedural Circle
+            catch (Exception) { }
             return CreateCircleSprite();
         }
 
@@ -365,40 +413,38 @@ namespace VCLYSS
         {
             if (_audioSource == null) return;
             
-            _audioSource.volume = Main.CfgMasterVolume.Value;
+            // Set base volume to 1.0 (Boost happens in ProcessPCM)
+            _audioSource.volume = 1.0f; 
             
             if (IsLocalPlayer) 
             {
                 _audioSource.spatialBlend = 0f; 
+                // Add Earmuff Visualizer to local player
+                if (_earmuffVis == null) _earmuffVis = gameObject.AddComponent<EarmuffVisualizer>();
             }
             else
             {
-                // STRICTLY SUPPORTED API ONLY
                 _audioSource.spatialBlend = Main.CfgSpatialBlending.Value ? 1.0f : 0.0f;
                 _audioSource.minDistance = Main.CfgMinDistance.Value;
                 _audioSource.maxDistance = Main.CfgMaxDistance.Value;
-                _audioSource.rolloffMode = AudioRolloffMode.Logarithmic;
+                _audioSource.rolloffMode = AudioRolloffMode.Linear; // LINEAR IS BETTER FOR VOIP
             }
         }
-
-        // --- THE LOOP ---
 
         void Update()
         {
             if (!Main.CfgEnabled.Value || !_audioInitialized) return;
-
             if (!IsLocalPlayer) CheckLocalPlayerStatus();
 
-            if (IsLocalPlayer) 
-            {
-                HandleMicInput();
-            }
+            // Host Requirement Check
+            if (!VoiceSystem.IsVoiceAllowedInLobby && !Main.CfgMicTest.Value) return;
 
-            // --- TIMEOUT CHECK (The Anti-Loop Fix) ---
+            if (IsLocalPlayer) HandleMicInput();
+
             if (_isPlaying && Time.time - _lastPacketTime > 0.3f)
             {
                 _audioSource.Stop();
-                FlushBuffer(); // Wipe the buffer so next play is fresh
+                FlushBuffer(); 
                 _isPlaying = false;
                 _lastVolume = 0f;
             }
@@ -421,7 +467,6 @@ namespace VCLYSS
             {
                 SteamUser.StartVoiceRecording();
                 _isRecording = true;
-                Main.Log.LogInfo("Mic Recording Started");
             }
             else if (!wantsToTalk && _isRecording)
             {
@@ -435,7 +480,6 @@ namespace VCLYSS
                 {
                     uint available;
                     SteamUser.GetAvailableVoice(out available);
-
                     if (available == 0) break;
 
                     uint bytesWritten;
@@ -453,21 +497,13 @@ namespace VCLYSS
                         else
                         {
                             var packet = new VoicePacket(packetData);
-                            
-                            // --- MULTICAST FIX: Send to ALL OTHER players individually ---
                             foreach(var vm in VoiceSystem.ActiveManagers)
                             {
                                 if (vm != this && vm.AttachedPlayer != null)
                                 {
-                                    CodeTalkerNetwork.SendNetworkPacket(
-                                        vm.AttachedPlayer, 
-                                        packet, 
-                                        Compressors.CompressionType.GZip, 
-                                        CompressionLevel.Fastest
-                                    );
+                                    CodeTalkerNetwork.SendNetworkPacket(vm.AttachedPlayer, packet, Compressors.CompressionType.GZip, CompressionLevel.Fastest);
                                 }
                             }
-                            
                             _lastVolume = Mathf.Lerp(_lastVolume, 0.8f, Time.deltaTime * 20f); 
                             if(_lipSync != null) _lipSync.SetSpeaking();
                             _lastPacketTime = Time.time; 
@@ -478,24 +514,17 @@ namespace VCLYSS
             }
         }
 
-        // --- THE RECEIVER ---
-
         public void ReceiveNetworkData(byte[] compressedData)
         {
             if (IsLocalPlayer && !Main.CfgMicTest.Value) return; 
 
             uint bytesWritten;
-            EVoiceResult res = SteamUser.DecompressVoice(
-                compressedData, (uint)compressedData.Length,
-                _decompressedBuffer, (uint)_decompressedBuffer.Length,
-                out bytesWritten, (uint)_sampleRate
-            );
+            EVoiceResult res = SteamUser.DecompressVoice(compressedData, (uint)compressedData.Length, _decompressedBuffer, (uint)_decompressedBuffer.Length, out bytesWritten, (uint)_sampleRate);
 
             if (res == EVoiceResult.k_EVoiceResultOK && bytesWritten > 0)
             {
                 ProcessPCMData(_decompressedBuffer, (int)bytesWritten);
                 if(_lipSync != null) _lipSync.SetSpeaking();
-                
                 _lastPacketTime = Time.time; 
             }
         }
@@ -505,11 +534,18 @@ namespace VCLYSS
             int sampleCount = length / 2; 
             float maxVol = 0f;
             
-            // 1. Write Audio Data
+            // --- VOLUME GAIN CALCULATION ---
+            // If MasterVolume is 0, gain is 0 (Silence).
+            float gain = Main.CfgMasterVolume.Value; 
+
             for (int i = 0; i < sampleCount; i++)
             {
                 short val = BitConverter.ToInt16(rawBytes, i * 2);
-                float floatVal = val / 32768.0f;
+                float floatVal = (val / 32768.0f) * gain; // Apply Boost here
+                
+                // Clamp
+                if (floatVal > 1f) floatVal = 1f;
+                if (floatVal < -1f) floatVal = -1f;
                 
                 _floatBuffer[_writePos] = floatVal;
                 _writePos = (_writePos + 1) % _bufferLength;
@@ -518,20 +554,13 @@ namespace VCLYSS
                 if (absVol > maxVol) maxVol = absVol;
             }
 
-            // 2. Clear Ahead (Safety Silence)
             int silenceSamples = _sampleRate / 2; 
             int clearStart = _writePos;
-            for (int i = 0; i < silenceSamples; i++)
-            {
-                _floatBuffer[(clearStart + i) % _bufferLength] = 0f;
-            }
+            for (int i = 0; i < silenceSamples; i++) _floatBuffer[(clearStart + i) % _bufferLength] = 0f;
 
             _lastVolume = Mathf.Lerp(_lastVolume, maxVol, Time.deltaTime * 10f);
-
-            // 3. Update Clip
             _streamingClip.SetData(_floatBuffer, 0);
 
-            // 4. Play / Sync
             if (!_audioSource.isPlaying) 
             {
                 _audioSource.Play();
@@ -540,52 +569,32 @@ namespace VCLYSS
             
             int playPos = _audioSource.timeSamples;
             int dist = (_writePos - playPos + _bufferLength) % _bufferLength;
-            
-            // If lag > 0.2s, snap closer
             if (dist > (_sampleRate / 5)) 
             {
-                int newPos = _writePos - (_sampleRate / 20); // Snap to 0.05s behind
+                int newPos = _writePos - (_sampleRate / 20); 
                 if (newPos < 0) newPos += _bufferLength;
                 _audioSource.timeSamples = newPos;
             }
         }
 
-        // --- VISUALS ---
-
         private void UpdateVisuals()
         {
             if (_bubbleObject == null) return;
-            
-            if (!Main.CfgShowHeadIcons.Value) 
-            {
-                _bubbleObject.SetActive(false);
-                return;
-            }
+            if (!Main.CfgShowHeadIcons.Value) { _bubbleObject.SetActive(false); return; }
 
             if (_lastVolume > 0.01f)
             {
                 _bubbleObject.SetActive(true);
-                
-                if (Camera.main != null)
-                    _bubbleObject.transform.LookAt(Camera.main.transform);
-
-                // SPINNING
+                if (Camera.main != null) _bubbleObject.transform.LookAt(Camera.main.transform);
                 _bubbleObject.transform.Rotate(Vector3.up, 180f * Time.deltaTime);
-
                 float scale = 0.5f + (_lastVolume * 0.5f);
                 _bubbleObject.transform.localScale = Vector3.one * scale;
-                
                 _lastVolume = Mathf.Lerp(_lastVolume, 0f, Time.deltaTime * 5f);
             }
-            else
-            {
-                _bubbleObject.SetActive(false);
-            }
+            else _bubbleObject.SetActive(false);
         }
 
         public bool IsSpeaking() => _lastVolume > 0.01f;
-
-        // --- UTILS ---
 
         private void CheckLocalPlayerStatus()
         {
@@ -601,39 +610,84 @@ namespace VCLYSS
         {
             if (Main.CfgMicTest.Value) return true;
             if (Main.CfgMicMode.Value == Main.MicMode.AlwaysOn) return true;
-            
-            if (Main.CfgMicMode.Value == Main.MicMode.PushToTalk) 
-                return Input.GetKey(Main.CfgPushToTalk.Value);
-            
+            if (Main.CfgMicMode.Value == Main.MicMode.PushToTalk) return Input.GetKey(Main.CfgPushToTalk.Value);
             if (Main.CfgMicMode.Value == Main.MicMode.Toggle)
             {
                 bool isKeyDown = Input.GetKey(Main.CfgPushToTalk.Value);
-                if (isKeyDown && !_wasKeyDown) 
-                {
-                    _isToggleOn = !_isToggleOn;
-                }
+                if (isKeyDown && !_wasKeyDown) _isToggleOn = !_isToggleOn;
                 _wasKeyDown = isKeyDown;
                 return _isToggleOn;
             }
-                
             return false;
         }
 
         private Sprite CreateCircleSprite()
         {
-            int res = 64;
-            Texture2D tex = new Texture2D(res, res);
-            Color[] cols = new Color[res*res];
-            float r = res/2f;
-            Vector2 c = new Vector2(r,r);
-            for(int y=0;y<res;y++){
-                for(int x=0;x<res;x++){
-                    float d = Vector2.Distance(new Vector2(x,y), c);
-                    cols[y*res+x] = d < r ? Color.white : Color.clear;
-                }
-            }
+            int res = 64; Texture2D tex = new Texture2D(res, res); Color[] cols = new Color[res*res];
+            float r = res/2f; Vector2 c = new Vector2(r,r);
+            for(int y=0;y<res;y++) for(int x=0;x<res;x++) { float d = Vector2.Distance(new Vector2(x,y), c); cols[y*res+x] = d < r ? Color.white : Color.clear; }
             tex.SetPixels(cols); tex.Apply();
             return Sprite.Create(tex, new Rect(0,0,res,res), new Vector2(0.5f,0.5f));
+        }
+    }
+
+    // -----------------------------------------------------------
+    // EARMUFF VISUALIZER (VRChat Style)
+    // -----------------------------------------------------------
+    public class EarmuffVisualizer : MonoBehaviour
+    {
+        private LineRenderer _line;
+        private static List<EarmuffVisualizer> _all = new List<EarmuffVisualizer>();
+
+        void Awake()
+        {
+            _all.Add(this);
+            _line = gameObject.AddComponent<LineRenderer>();
+            _line.useWorldSpace = false;
+            _line.loop = true;
+            _line.positionCount = 50;
+            _line.startWidth = 0.05f;
+            _line.endWidth = 0.05f;
+            _line.material = new Material(Shader.Find("Sprites/Default"));
+            _line.startColor = new Color(1f, 0f, 0f, 0.5f); // Red Ring
+            _line.endColor = new Color(1f, 0f, 0f, 0.5f);
+            
+            // Draw circle on ground
+            float radius = Main.CfgMaxDistance.Value;
+            for (int i = 0; i < 50; i++)
+            {
+                float angle = i * (2f * Mathf.PI / 50f);
+                float x = Mathf.Cos(angle) * radius;
+                float z = Mathf.Sin(angle) * radius;
+                _line.SetPosition(i, new Vector3(x, 0.1f, z));
+            }
+            
+            UpdateState();
+        }
+
+        void OnDestroy() => _all.Remove(this);
+
+        public void UpdateState()
+        {
+            if (_line == null) return;
+            // Only show if config enabled AND we are in a lobby
+            bool show = Main.CfgShowRangeVisual.Value && VoiceSystem.IsVoiceAllowedInLobby;
+            _line.enabled = show;
+            
+            if (show)
+            {
+                float radius = Main.CfgMaxDistance.Value;
+                for (int i = 0; i < 50; i++)
+                {
+                    float angle = i * (2f * Mathf.PI / 50f);
+                    _line.SetPosition(i, new Vector3(Mathf.Cos(angle) * radius, 0.1f, Mathf.Sin(angle) * radius));
+                }
+            }
+        }
+
+        public static void UpdateVisuals()
+        {
+            foreach(var v in _all) v.UpdateState();
         }
     }
 
@@ -645,7 +699,6 @@ namespace VCLYSS
         private PlayerRaceModel _playerRaceModel;
         private bool _initialized = false;
         private Coroutine _mouthResetCoroutine;
-        
         public enum MouthCondition { Closed = 0, Open = 1 }
 
         public void Initialize(Player player)
@@ -656,7 +709,7 @@ namespace VCLYSS
                 if (_playerRaceModel == null && player._pVisual != null) _playerRaceModel = player._pVisual._playerRaceModel;
                 if (_playerRaceModel == null) return;
                 _initialized = true;
-            } catch (Exception e) { Main.Log.LogError($"LipSync error: {e.Message}"); }
+            } catch (Exception) { }
         }
 
         public void SetSpeaking()
