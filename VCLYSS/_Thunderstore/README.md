@@ -1,35 +1,94 @@
 # VCLYSS
-Voice Chat plugin for Atlyss multiplayer. (In Private Testing)
-- Dont reveal this outside of the discord server
-- But please do invite people into it, we dont want no incoming issues that will interfere with the testing phase
-  https://discord.gg/ePhX4Fb2we
+**Voice Chat plugin for Atlyss multiplayer.**
 
-Adds fully functional **Proximity Voice Chat** to ATLYSS.
-Talk to your friends, organize dungeon runs, or just hang out in the plaza with 3D spatial audio.
+> ⚠️ **PRIVATE TESTING BUILD**
+> Please do not share this file outside of the Discord server.
+> However, please **DO** invite people to the server to help us test! We need to squash bugs before the public release.
+> [**Join the Testing Discord**](https://discord.gg/ePhX4Fb2we)
+
+Adds fully functional **Proximity Voice Chat** to ATLYSS. Talk to your friends, organize dungeon runs, or just hang out in the plaza with 3D spatial audio.
 
 ## Features
-*   **Proximity Chat:** Voices get quieter as players walk away.
-*   **Visual Indicators:** A speech bubble appears above the head of whoever is talking.
-*   **Host Control:** If the Host doesn't have the mod, it automatically disables itself to prevent crashes.
-*   **Moderation:** Fully compatible with **HostModeration**. If a player is kicked/banned, their voice is instantly cut.
+*   **Proximity Chat:** Voices are 3D and get quieter as players walk away.
+*   **Visual Indicators:**
+    *   **Speech Bubbles:** A bubble appears over a player's head when they talk.
+    *   **Overlay:** See who is talking in the UI.
+    *   **Lip Sync:** Player mouths move when they speak!
+*   **Host Safety:** The mod automatically checks if the Lobby Host has VCLYSS installed. If they don't, the mod disables itself to prevent connection issues.
+*   **Mic Test:** Loopback mode to hear yourself and adjust your settings.
 *   **Panic Button:** A "Mute Everyone" toggle in the settings for emergencies.
 
-## Settings (Press F1 / Mod Settings)
-*   **Microphone:** Supports Push-to-Talk or Toggle.
-*   **Threshold:** Adjustable mic gate to filter out background noise.
-*   **Spatial Audio:** Adjust how far voices travel (Earmuff Mode).
-*   **Volume:** Master volume slider.
-
 ## Installation
-1.  Install **BepInEx**.
-2.  Install **CodeYapper** (Required for networking).
-3.  Install **Nessie-EasySettings** (Required for the menu).
+1.  Install **BepInEx** (if you haven't already).
+2.  Install **CodeTalker** (Required for networking).
+3.  Install **Nessie-EasySettings** (Required for the configuration menu).
 4.  Drop `VCLYSS.dll` into your `BepInEx/plugins` folder.
 
-## For Developers
-This mod exposes a public API for other mods to mute/unmute players programmatically.
+## Settings
+Press **F1** (or your Mod Settings bind) to configure:
+
+*   **Input Mode:** Choose between **Push-to-Talk**, **Toggle**, or **Always On**.
+*   **Mic Threshold:** Adjust this if your mic is picking up breathing or keyboard clicks.
+*   **Spatial Audio:**
+    *   **Min Distance:** How close you need to be for 100% volume.
+    *   **Max Distance:** The distance at which voices become silent.
+*   **Visuals:** Toggle the overlay, head icons, or lip sync.
+
+---
+
+## 🛠️ For Developers (API)
+VCLYSS exposes a static API designed for other mods (Radio mods, Admin tools, Status Effects, etc.).
+
+### 1. How to Reference
+Add `VCLYSS.dll` as a reference in your project, or use Reflection/Soft Dependency if you don't want a hard requirement.
+
+### 2. Usage Examples
+
+**Muting a Player (e.g., Blocking/Admin Mod)**
 ```csharp
-if (Chainloader.PluginInfos.ContainsKey("com.soggy.vclyss"))
-{
-    VCLYSS.VoiceManager.Instance.MutePlayer(steamID);
+// Mutes the player LOCALLY (you won't hear them, but others might)
+VCLYSS.VoiceAPI.SetPlayerMute(targetPlayer, true);
+```
+
+**Changing Volume (e.g., Deafness Status Effect)**
+```csharp
+// Set volume to 10%
+VCLYSS.VoiceAPI.SetPlayerVolume(targetPlayer, 0.1f);
+
+// Reset to normal
+VCLYSS.VoiceAPI.SetPlayerVolume(targetPlayer, 1.0f);
+```
+
+**Forcing Global Audio (e.g., Walkie-Talkie / Phone Mod)**
+```csharp
+// Force audio to be 2D (Global) regardless of distance
+VCLYSS.VoiceAPI.SetPlayerSpatialOverride(targetPlayer, false);
+
+// Force audio to be 3D (Spatial)
+VCLYSS.VoiceAPI.SetPlayerSpatialOverride(targetPlayer, true);
+
+// Reset to user's Config settings
+VCLYSS.VoiceAPI.SetPlayerSpatialOverride(targetPlayer, null);
+```
+
+**Reacting to Speech (e.g., Custom UI)**
+```csharp
+void Start() {
+    VCLYSS.VoiceAPI.OnPlayerStartSpeaking += (player) => {
+        Debug.Log($"{player._nickname} started talking!");
+    };
+    
+    VCLYSS.VoiceAPI.OnPlayerStopSpeaking += (player) => {
+        Debug.Log($"{player._nickname} stopped talking.");
+    };
 }
+```
+
+### 3. Soft Dependency Check
+If you want to support VCLYSS but not require it:
+```csharp
+if (BepInEx.Bootstrap.Chainloader.PluginInfos.ContainsKey("com.soggy.vclyss"))
+{
+    // Use Reflection or a separate wrapper method to call the API
+}
+```
