@@ -53,4 +53,9 @@
     <ItemGroup>
         <Folder Include="_ThunderstoreBuild\"/>
     </ItemGroup>
+
+    <ItemGroup>
+      <None Remove="Icons\Voice.png" />
+      <EmbeddedResource Include="Icons\Voice.png" />
+    </ItemGroup>
 </Project>

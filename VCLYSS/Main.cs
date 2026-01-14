@@ -8,6 +8,8 @@ using UnityEngine;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
+using System.Reflection;
 using CodeTalker; 
 using Nessie.ATLYSS.EasySettings;
 using CompressionLevel = System.IO.Compression.CompressionLevel; 
@@ -217,7 +219,7 @@ namespace VCLYSS
         private SpriteRenderer _bubbleRenderer;
         private LipSync _lipSync;
 
-        // --- STEAM BUFFERS ---
+        // --- BUFFERS ---
         private byte[] _compressedBuffer = new byte[8192]; 
         private byte[] _decompressedBuffer = new byte[65536]; 
 
@@ -233,11 +235,28 @@ namespace VCLYSS
         private float _lastVolume = 0f;
         private bool _isToggleOn = false;
         private bool _wasKeyDown = false;
+        
+        // --- TIMEOUT TRACKING (Fixes Looping) ---
+        private float _lastPacketTime = 0f;
+        private bool _isPlaying = false;
+        private bool _audioInitialized = false;
 
         void Awake()
         {
             AttachedPlayer = GetComponent<Player>();
             if (AttachedPlayer == null) { Destroy(this); return; }
+
+            // Don't initialize audio yet, wait for SteamID
+            StartCoroutine(WaitForSteamID());
+        }
+
+        private IEnumerator WaitForSteamID()
+        {
+            // Wait until SteamID is populated
+            while (VoiceSystem.GetSteamIDFromPlayer(AttachedPlayer) == 0)
+            {
+                yield return new WaitForSeconds(0.5f);
+            }
 
             OwnerID = VoiceSystem.GetSteamIDFromPlayer(AttachedPlayer);
             VoiceSystem.ActiveManagers.Add(this);
@@ -248,12 +267,15 @@ namespace VCLYSS
             _lipSync = gameObject.AddComponent<LipSync>();
             _lipSync.Initialize(AttachedPlayer);
             
-            Main.Log.LogInfo($"[VoiceManager] Woke up on {AttachedPlayer._nickname}");
+            _audioInitialized = true;
+            Main.Log.LogInfo($"[VoiceManager] Initialized on {AttachedPlayer._nickname} (ID: {OwnerID})");
+            
+            CheckLocalPlayerStatus();
         }
 
         void Start()
         {
-            CheckLocalPlayerStatus();
+            if (_audioInitialized) CheckLocalPlayerStatus();
         }
 
         void OnDestroy()
@@ -274,16 +296,15 @@ namespace VCLYSS
             emitter.transform.localPosition = new Vector3(0, 1.7f, 0); 
 
             _audioSource = emitter.AddComponent<AudioSource>();
-            _audioSource.loop = true; // Necessary for Ring Buffer
-            _audioSource.playOnAwake = true;
+            _audioSource.loop = true; // Ring buffer requires loop
+            _audioSource.playOnAwake = false;
             
             _sampleRate = (int)SteamUser.GetVoiceOptimalSampleRate();
-            _bufferLength = _sampleRate * 2; // 2 Seconds Buffer (Short enough for realtime, long enough for jitter)
+            _bufferLength = _sampleRate * 2; // 2 Second Buffer
             _floatBuffer = new float[_bufferLength];
             
             _streamingClip = AudioClip.Create($"Voice_{OwnerID}", _bufferLength, 1, _sampleRate, false);
             _audioSource.clip = _streamingClip;
-            _audioSource.Play(); 
             
             ApplyAudioSettings();
         }
@@ -292,12 +313,52 @@ namespace VCLYSS
         {
             _bubbleObject = new GameObject("VoiceBubble");
             _bubbleObject.transform.SetParent(transform, false);
-            _bubbleObject.transform.localPosition = new Vector3(0, 2.2f, 0); 
+            
+            // Raised to 3.8f (Requested adjustment)
+            _bubbleObject.transform.localPosition = new Vector3(0, 3.8f, 0); 
             
             _bubbleRenderer = _bubbleObject.AddComponent<SpriteRenderer>();
-            _bubbleRenderer.sprite = CreateCircleSprite(); 
-            _bubbleRenderer.color = new Color(1f, 0.5f, 0f, 0.9f); 
+            
+            // --- LOAD EMBEDDED RESOURCE ---
+            _bubbleRenderer.sprite = LoadVoiceSprite(); 
+            _bubbleRenderer.color = Color.white; 
             _bubbleObject.SetActive(false);
+        }
+
+        // --- EMBEDDED RESOURCE LOADER ---
+        private Sprite LoadVoiceSprite()
+        {
+            try 
+            {
+                var assembly = Assembly.GetExecutingAssembly();
+                string resourceName = "VCLYSS.Icons.Voice.png";
+
+                using (Stream stream = assembly.GetManifestResourceStream(resourceName))
+                {
+                    if (stream != null)
+                    {
+                        byte[] buffer = new byte[stream.Length];
+                        stream.Read(buffer, 0, buffer.Length);
+                        
+                        Texture2D tex = new Texture2D(2, 2);
+                        if (tex.LoadImage(buffer))
+                        {
+                            return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
+                        }
+                    }
+                    else
+                    {
+                        Main.Log.LogWarning($"Resource '{resourceName}' not found. Check Embedded Resource settings.");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Main.Log.LogError($"Failed to load embedded Voice.png: {e.Message}");
+            }
+
+            // Fallback: Procedural Circle
+            return CreateCircleSprite();
         }
 
         public void ApplyAudioSettings()
@@ -312,12 +373,11 @@ namespace VCLYSS
             }
             else
             {
-                // STRICTLY USING SUPPORTED API
+                // STRICTLY SUPPORTED API ONLY
                 _audioSource.spatialBlend = Main.CfgSpatialBlending.Value ? 1.0f : 0.0f;
                 _audioSource.minDistance = Main.CfgMinDistance.Value;
                 _audioSource.maxDistance = Main.CfgMaxDistance.Value;
                 _audioSource.rolloffMode = AudioRolloffMode.Logarithmic;
-                // Do NOT use minVolume, maxVolume, or rolloffFactor
             }
         }
 
@@ -325,7 +385,7 @@ namespace VCLYSS
 
         void Update()
         {
-            if (!Main.CfgEnabled.Value) return;
+            if (!Main.CfgEnabled.Value || !_audioInitialized) return;
 
             if (!IsLocalPlayer) CheckLocalPlayerStatus();
 
@@ -334,7 +394,23 @@ namespace VCLYSS
                 HandleMicInput();
             }
 
+            // --- TIMEOUT CHECK (The Anti-Loop Fix) ---
+            if (_isPlaying && Time.time - _lastPacketTime > 0.3f)
+            {
+                _audioSource.Stop();
+                FlushBuffer(); // Wipe the buffer so next play is fresh
+                _isPlaying = false;
+                _lastVolume = 0f;
+            }
+
             UpdateVisuals();
+        }
+
+        private void FlushBuffer()
+        {
+            Array.Clear(_floatBuffer, 0, _floatBuffer.Length);
+            _streamingClip.SetData(_floatBuffer, 0);
+            _writePos = 0;
         }
 
         private void HandleMicInput()
@@ -378,15 +454,24 @@ namespace VCLYSS
                         {
                             var packet = new VoicePacket(packetData);
                             
-                            CodeTalkerNetwork.SendNetworkPacket(
-                                AttachedPlayer, 
-                                packet, 
-                                Compressors.CompressionType.GZip, 
-                                CompressionLevel.Fastest
-                            );
+                            // --- MULTICAST FIX: Send to ALL OTHER players individually ---
+                            foreach(var vm in VoiceSystem.ActiveManagers)
+                            {
+                                if (vm != this && vm.AttachedPlayer != null)
+                                {
+                                    CodeTalkerNetwork.SendNetworkPacket(
+                                        vm.AttachedPlayer, 
+                                        packet, 
+                                        Compressors.CompressionType.GZip, 
+                                        CompressionLevel.Fastest
+                                    );
+                                }
+                            }
                             
                             _lastVolume = Mathf.Lerp(_lastVolume, 0.8f, Time.deltaTime * 20f); 
                             if(_lipSync != null) _lipSync.SetSpeaking();
+                            _lastPacketTime = Time.time; 
+                            if (!_isPlaying) { _isPlaying = true; } 
                         }
                     }
                 }
@@ -410,6 +495,8 @@ namespace VCLYSS
             {
                 ProcessPCMData(_decompressedBuffer, (int)bytesWritten);
                 if(_lipSync != null) _lipSync.SetSpeaking();
+                
+                _lastPacketTime = Time.time; 
             }
         }
 
@@ -431,9 +518,8 @@ namespace VCLYSS
                 if (absVol > maxVol) maxVol = absVol;
             }
 
-            // 2. Write Silence Ahead (Anti-Loop / Realtime Fix)
-            // Clear 0.15s ahead of the write head to prevent looping old audio
-            int silenceSamples = _sampleRate / 6; 
+            // 2. Clear Ahead (Safety Silence)
+            int silenceSamples = _sampleRate / 2; 
             int clearStart = _writePos;
             for (int i = 0; i < silenceSamples; i++)
             {
@@ -445,14 +531,18 @@ namespace VCLYSS
             // 3. Update Clip
             _streamingClip.SetData(_floatBuffer, 0);
 
-            // 4. Sync Playback
-            if (!_audioSource.isPlaying) _audioSource.Play();
+            // 4. Play / Sync
+            if (!_audioSource.isPlaying) 
+            {
+                _audioSource.Play();
+                _isPlaying = true;
+            }
             
             int playPos = _audioSource.timeSamples;
             int dist = (_writePos - playPos + _bufferLength) % _bufferLength;
             
-            // If the write head is too far ahead (>0.15s), snap playhead closer
-            if (dist > (_sampleRate / 6)) 
+            // If lag > 0.2s, snap closer
+            if (dist > (_sampleRate / 5)) 
             {
                 int newPos = _writePos - (_sampleRate / 20); // Snap to 0.05s behind
                 if (newPos < 0) newPos += _bufferLength;
@@ -478,6 +568,9 @@ namespace VCLYSS
                 
                 if (Camera.main != null)
                     _bubbleObject.transform.LookAt(Camera.main.transform);
+
+                // SPINNING
+                _bubbleObject.transform.Rotate(Vector3.up, 180f * Time.deltaTime);
 
                 float scale = 0.5f + (_lastVolume * 0.5f);
                 _bubbleObject.transform.localScale = Vector3.one * scale;
