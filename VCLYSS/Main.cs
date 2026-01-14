@@ -1,7 +1,6 @@
 ﻿using BepInEx;
 using BepInEx.Logging;
 using BepInEx.Configuration;
-using HarmonyLib;
 using CodeTalker.Networking;
 using CodeTalker.Packets;
 using Steamworks;
@@ -9,7 +8,9 @@ using UnityEngine;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using CodeTalker; // Needed for Compressors
 using Nessie.ATLYSS.EasySettings;
+using CompressionLevel = System.IO.Compression.CompressionLevel; // Needed for CompressionLevel
 
 namespace VCLYSS
 {
@@ -19,9 +20,8 @@ namespace VCLYSS
     {
         public static Main Instance;
         internal static ManualLogSource Log;
-        private Harmony _harmony;
 
-        // --- CONFIG ---
+        // --- CONFIGURATION ---
         public static ConfigEntry<bool> CfgEnabled;
         public static ConfigEntry<float> CfgMasterVolume;
         public static ConfigEntry<bool> CfgMuteAll;
@@ -44,20 +44,16 @@ namespace VCLYSS
 
             InitConfig();
             Settings.OnInitialized.AddListener(AddSettings);
-            Settings.OnApplySettings.AddListener(() => { Config.Save(); VoiceRouter.ApplySettingsToAll(); });
-
-            _harmony = new Harmony(ModInfo.GUID);
-            _harmony.PatchAll();
+            Settings.OnApplySettings.AddListener(() => { Config.Save(); VoiceSystem.ApplySettingsToAll(); });
 
             StartCoroutine(RegisterPacketDelayed());
 
-            // We need ONE global object to route packets to the players
-            var go = new GameObject("VCLYSS_GlobalRouter");
+            var go = new GameObject("VCLYSS_System");
             DontDestroyOnLoad(go);
-            go.AddComponent<VoiceRouter>();
+            go.AddComponent<VoiceSystem>();
             go.AddComponent<VoiceOverlay>();
 
-            Logger.LogInfo($"[{ModInfo.NAME}] Loaded. Voice Chat Ready.");
+            Logger.LogInfo($"[{ModInfo.NAME}] Loaded. Voice System Started.");
         }
 
         private IEnumerator RegisterPacketDelayed()
@@ -71,8 +67,7 @@ namespace VCLYSS
         {
             if (packet is VoicePacket voicePkt)
             {
-                // Send the data to the correct player's VoiceManager
-                VoiceRouter.Instance.RoutePacket(header.SenderID, voicePkt.VoiceData);
+                VoiceSystem.Instance.RoutePacket(header.SenderID, voicePkt.VoiceData);
             }
         }
 
@@ -89,7 +84,7 @@ namespace VCLYSS
             CfgMaxDistance = Config.Bind("3. Spatial", "Max Distance", 25.0f, new ConfigDescription("Falloff Zone", new AcceptableValueRange<float>(5.0f, 100.0f)));
             CfgSpatialBlending = Config.Bind("3. Spatial", "3D Spatial Audio", true, "Enable 3D Directional Audio");
             CfgShowOverlay = Config.Bind("4. Visuals", "Show Voice Overlay", true, "Show list of speakers in top right");
-            CfgShowHeadIcons = Config.Bind("4. Visuals", "Show Head Icons", true, "Show bubbles above players heads");
+            CfgShowHeadIcons = Config.Bind("4. Visuals", "Show Head Icons (Bubble)", true, "Show GMod-style bubble");
             CfgLipSync = Config.Bind("4. Visuals", "Enable Lip Sync", true, "Animate mouths when talking");
         }
 
@@ -116,9 +111,6 @@ namespace VCLYSS
         }
     }
 
-    // -----------------------------------------------------------
-    // PACKET
-    // -----------------------------------------------------------
     public class VoicePacket : BinaryPacketBase
     {
         public override string PacketSignature => "VCLYSS_VOICE";
@@ -130,26 +122,25 @@ namespace VCLYSS
     }
 
     // -----------------------------------------------------------
-    // GLOBAL ROUTER (Finds the Player, gives them the data)
+    // GLOBAL SYSTEM
     // -----------------------------------------------------------
-    public class VoiceRouter : MonoBehaviour
+    public class VoiceSystem : MonoBehaviour
     {
-        public static VoiceRouter Instance;
+        public static VoiceSystem Instance;
         public static List<VoiceManager> ActiveManagers = new List<VoiceManager>();
         private HashSet<ulong> _mutedPlayers = new HashSet<ulong>();
 
         void Awake() 
         { 
             Instance = this; 
-            StartCoroutine(EnsureVoiceComponents());
+            StartCoroutine(PlayerScanner());
         }
 
-        // Safety loop to ensure every player gets a VoiceManager
-        private IEnumerator EnsureVoiceComponents()
+        private IEnumerator PlayerScanner()
         {
+            WaitForSeconds wait = new WaitForSeconds(2f);
             while (true)
             {
-                yield return new WaitForSeconds(2f);
                 try
                 {
                     Player[] allPlayers = FindObjectsOfType<Player>();
@@ -157,11 +148,13 @@ namespace VCLYSS
                     {
                         if (p != null && p.GetComponent<VoiceManager>() == null)
                         {
+                            Main.Log.LogInfo($"[Scanner] Attaching VoiceManager to {p._nickname}");
                             p.gameObject.AddComponent<VoiceManager>();
                         }
                     }
                 }
-                catch { }
+                catch (Exception e) { Main.Log.LogWarning($"Scanner error: {e.Message}"); }
+                yield return wait;
             }
         }
 
@@ -184,8 +177,14 @@ namespace VCLYSS
             }
             // Fallback
             Player[] players = FindObjectsOfType<Player>();
-            foreach(var p in players) {
-                if (GetSteamIDFromPlayer(p) == steamID) return p.GetComponent<VoiceManager>();
+            foreach(var p in players) 
+            {
+                if (GetSteamIDFromPlayer(p) == steamID)
+                {
+                    var vm = p.GetComponent<VoiceManager>();
+                    if (vm == null) vm = p.gameObject.AddComponent<VoiceManager>();
+                    return vm;
+                }
             }
             return null;
         }
@@ -204,7 +203,7 @@ namespace VCLYSS
     }
 
     // -----------------------------------------------------------
-    // VOICE MANAGER (THE SCRIPT ON THE PLAYER)
+    // VOICE MANAGER
     // -----------------------------------------------------------
     public class VoiceManager : MonoBehaviour
     {
@@ -213,88 +212,95 @@ namespace VCLYSS
         public bool IsLocalPlayer = false;
 
         private AudioSource _audioSource;
-        private VoiceIndicator _indicator;
+        private GameObject _bubbleObject;
+        private SpriteRenderer _bubbleRenderer;
         private LipSync _lipSync;
-        
-        // Buffers
-        private const uint CompressedBufferSize = 8192;
-        private const uint DecompressedBufferSize = 22050;
-        private byte[] _compressedBuffer = new byte[CompressedBufferSize];
-        private byte[] _decompressedBuffer = new byte[DecompressedBufferSize];
-        private byte[] _netDecompressBuffer = new byte[DecompressedBufferSize];
 
-        // Ring Buffer Logic
-        private Queue<float[]> _audioQueue = new Queue<float[]>();
-        private object _queueLock = new object();
-        private float[] _readBuffer;
-        private int _readPosition = 0;
+        private byte[] _compressedBuffer = new byte[8192]; 
+        private byte[] _decompressedBuffer = new byte[65536]; 
+
+        private float[] _floatBuffer; 
+        private int _writePos = 0;
+        private int _bufferLength; 
         private AudioClip _streamingClip;
-        private bool _isPlaying = false;
-        private float _lastSpeakingTime;
 
-        // Input
+        private bool _isRecording = false;
+        private float _lastVolume = 0f;
         private bool _isToggleOn = false;
         private bool _wasKeyDown = false;
 
         void Awake()
         {
             AttachedPlayer = GetComponent<Player>();
-            if (AttachedPlayer == null) 
-            { 
-                Destroy(this); 
-                return; 
-            }
+            if (AttachedPlayer == null) { Destroy(this); return; }
 
-            OwnerID = VoiceRouter.GetSteamIDFromPlayer(AttachedPlayer);
-            IsLocalPlayer = (AttachedPlayer == Player._mainPlayer);
+            OwnerID = VoiceSystem.GetSteamIDFromPlayer(AttachedPlayer);
+            VoiceSystem.ActiveManagers.Add(this);
 
-            VoiceRouter.ActiveManagers.Add(this);
             InitializeAudio();
+            InitializeBubble();
             
-            Main.Log.LogInfo($"VoiceManager attached to {AttachedPlayer._nickname} (Local: {IsLocalPlayer})");
+            _lipSync = gameObject.AddComponent<LipSync>();
+            _lipSync.Initialize(AttachedPlayer);
+            
+            Main.Log.LogInfo($"[VoiceManager] Woke up on {AttachedPlayer._nickname}");
+        }
+
+        void Start()
+        {
+            CheckLocalPlayerStatus();
         }
 
         void OnDestroy()
         {
-            VoiceRouter.ActiveManagers.Remove(this);
+            VoiceSystem.ActiveManagers.Remove(this);
+            if (IsLocalPlayer && _isRecording)
+            {
+                SteamUser.StopVoiceRecording();
+            }
         }
 
         private void InitializeAudio()
         {
             GameObject emitter = new GameObject("VoiceEmitter");
             emitter.transform.SetParent(transform, false);
-            emitter.transform.localPosition = new Vector3(0, 1.6f, 0);
+            emitter.transform.localPosition = new Vector3(0, 1.7f, 0); 
 
             _audioSource = emitter.AddComponent<AudioSource>();
-            
-            // Setup Audio Clip
-            int bufferLen = 44100 * 2; 
-            _readBuffer = new float[bufferLen];
-            _streamingClip = AudioClip.Create($"Voice_{OwnerID}", bufferLen, 1, (int)SteamUser.GetVoiceOptimalSampleRate(), false);
-            _streamingClip.SetData(_readBuffer, 0);
-
-            _audioSource.clip = _streamingClip;
             _audioSource.loop = true;
             _audioSource.playOnAwake = true;
             
+            int sampleRate = (int)SteamUser.GetVoiceOptimalSampleRate();
+            _bufferLength = sampleRate * 5; 
+            _floatBuffer = new float[_bufferLength];
+            
+            _streamingClip = AudioClip.Create($"Voice_{OwnerID}", _bufferLength, 1, sampleRate, false);
+            _audioSource.clip = _streamingClip;
+            _audioSource.Play(); 
+            
             ApplyAudioSettings();
+        }
+
+        private void InitializeBubble()
+        {
+            _bubbleObject = new GameObject("VoiceBubble");
+            _bubbleObject.transform.SetParent(transform, false);
+            _bubbleObject.transform.localPosition = new Vector3(0, 2.2f, 0); 
             
-            _indicator = emitter.AddComponent<VoiceIndicator>();
-            _indicator.Initialize();
-            
-            _lipSync = emitter.AddComponent<LipSync>();
-            _lipSync.Initialize(AttachedPlayer);
+            _bubbleRenderer = _bubbleObject.AddComponent<SpriteRenderer>();
+            _bubbleRenderer.sprite = CreateCircleSprite(); 
+            _bubbleRenderer.color = new Color(1f, 0.5f, 0f, 0.9f); 
+            _bubbleObject.SetActive(false);
         }
 
         public void ApplyAudioSettings()
         {
             if (_audioSource == null) return;
-            
             _audioSource.volume = Main.CfgMasterVolume.Value;
             
-            if (IsLocalPlayer)
+            if (IsLocalPlayer) 
             {
-                _audioSource.spatialBlend = 0f; // 2D for self/loopback
+                _audioSource.spatialBlend = 0f; 
             }
             else
             {
@@ -309,47 +315,163 @@ namespace VCLYSS
         {
             if (!Main.CfgEnabled.Value) return;
 
-            // If this is ME, check my mic and send data
-            if (IsLocalPlayer) HandleMicInput();
+            if (!IsLocalPlayer) CheckLocalPlayerStatus();
 
-            // Always process audio queue (play sound)
-            ProcessAudioQueue();
+            if (IsLocalPlayer) 
+            {
+                HandleMicInput();
+            }
+
+            UpdateVisuals();
         }
 
         private void HandleMicInput()
         {
-            bool isTransmitting = CheckInputKeys();
+            bool wantsToTalk = CheckInputKeys();
 
-            if (isTransmitting)
+            if (wantsToTalk && !_isRecording)
+            {
+                SteamUser.StartVoiceRecording();
+                _isRecording = true;
+                Main.Log.LogInfo("Mic Recording Started");
+            }
+            else if (!wantsToTalk && _isRecording)
+            {
+                SteamUser.StopVoiceRecording();
+                _isRecording = false;
+            }
+
+            if (_isRecording)
             {
                 while (true)
                 {
                     uint available;
                     SteamUser.GetAvailableVoice(out available);
+
                     if (available == 0) break;
 
                     uint bytesWritten;
-                    EVoiceResult result = SteamUser.GetVoice(true, _compressedBuffer, CompressedBufferSize, out bytesWritten);
+                    EVoiceResult res = SteamUser.GetVoice(true, _compressedBuffer, (uint)_compressedBuffer.Length, out bytesWritten);
 
-                    if (result == EVoiceResult.k_EVoiceResultOK && bytesWritten > 0)
+                    if (res == EVoiceResult.k_EVoiceResultOK && bytesWritten > 0)
                     {
-                        byte[] chunk = new byte[bytesWritten];
-                        Array.Copy(_compressedBuffer, chunk, bytesWritten);
+                        byte[] packetData = new byte[bytesWritten];
+                        Array.Copy(_compressedBuffer, packetData, bytesWritten);
 
                         if (Main.CfgMicTest.Value)
                         {
-                            ProcessLoopback(chunk);
+                            ReceiveNetworkData(packetData); 
                         }
                         else
                         {
-                            // Send to network
-                            var packet = new VoicePacket(chunk);
-                            CodeTalkerNetwork.SendNetworkPacket(AttachedPlayer, packet);
-                            SetSpeaking();
+                            // --- SENDING WITH GZIP COMPRESSION ---
+                            var packet = new VoicePacket(packetData);
+                            
+                            CodeTalkerNetwork.SendNetworkPacket(
+                                AttachedPlayer, 
+                                packet, 
+                                Compressors.CompressionType.GZip, 
+                                CompressionLevel.Fastest
+                            );
+                            
+                            _lastVolume = Mathf.Lerp(_lastVolume, 0.8f, Time.deltaTime * 20f); 
+                            if(_lipSync != null) _lipSync.SetSpeaking();
                         }
                     }
-                    else break;
                 }
+            }
+        }
+
+        public void ReceiveNetworkData(byte[] compressedData)
+        {
+            if (IsLocalPlayer && !Main.CfgMicTest.Value) return; 
+
+            // Steam Audio Decoding (Required for playback)
+            uint bytesWritten;
+            EVoiceResult res = SteamUser.DecompressVoice(
+                compressedData, (uint)compressedData.Length,
+                _decompressedBuffer, (uint)_decompressedBuffer.Length,
+                out bytesWritten, SteamUser.GetVoiceOptimalSampleRate()
+            );
+
+            if (res == EVoiceResult.k_EVoiceResultOK && bytesWritten > 0)
+            {
+                ProcessPCMData(_decompressedBuffer, (int)bytesWritten);
+                if(_lipSync != null) _lipSync.SetSpeaking();
+            }
+        }
+
+        private void ProcessPCMData(byte[] rawBytes, int length)
+        {
+            int sampleCount = length / 2; 
+            float maxVol = 0f;
+            
+            for (int i = 0; i < sampleCount; i++)
+            {
+                short val = BitConverter.ToInt16(rawBytes, i * 2);
+                float floatVal = val / 32768.0f;
+                
+                _floatBuffer[_writePos] = floatVal;
+                _writePos = (_writePos + 1) % _bufferLength;
+
+                float absVol = Mathf.Abs(floatVal);
+                if (absVol > maxVol) maxVol = absVol;
+            }
+
+            _lastVolume = Mathf.Lerp(_lastVolume, maxVol, Time.deltaTime * 10f);
+
+            _streamingClip.SetData(_floatBuffer, 0);
+
+            if (!_audioSource.isPlaying) _audioSource.Play();
+            
+            int playPos = _audioSource.timeSamples;
+            int dist = (_writePos - playPos + _bufferLength) % _bufferLength;
+            
+            if (dist > 24000) 
+            {
+                int newPos = _writePos - 2000;
+                if (newPos < 0) newPos += _bufferLength;
+                _audioSource.timeSamples = newPos;
+            }
+        }
+
+        private void UpdateVisuals()
+        {
+            if (_bubbleObject == null) return;
+            
+            if (!Main.CfgShowHeadIcons.Value) 
+            {
+                _bubbleObject.SetActive(false);
+                return;
+            }
+
+            if (_lastVolume > 0.01f)
+            {
+                _bubbleObject.SetActive(true);
+                
+                if (Camera.main != null)
+                    _bubbleObject.transform.LookAt(Camera.main.transform);
+
+                float scale = 0.5f + (_lastVolume * 0.5f);
+                _bubbleObject.transform.localScale = Vector3.one * scale;
+                
+                _lastVolume = Mathf.Lerp(_lastVolume, 0f, Time.deltaTime * 5f);
+            }
+            else
+            {
+                _bubbleObject.SetActive(false);
+            }
+        }
+
+        public bool IsSpeaking() => _lastVolume > 0.01f;
+
+        private void CheckLocalPlayerStatus()
+        {
+            if (IsLocalPlayer) return;
+            if (Player._mainPlayer != null && AttachedPlayer == Player._mainPlayer)
+            {
+                IsLocalPlayer = true;
+                ApplyAudioSettings();
             }
         }
 
@@ -357,195 +479,47 @@ namespace VCLYSS
         {
             if (Main.CfgMicTest.Value) return true;
             if (Main.CfgMicMode.Value == Main.MicMode.AlwaysOn) return true;
-            if (Main.CfgMicMode.Value == Main.MicMode.PushToTalk) return Input.GetKey(Main.CfgPushToTalk.Value);
+            
+            if (Main.CfgMicMode.Value == Main.MicMode.PushToTalk) 
+                return Input.GetKey(Main.CfgPushToTalk.Value);
+            
             if (Main.CfgMicMode.Value == Main.MicMode.Toggle)
             {
                 bool isKeyDown = Input.GetKey(Main.CfgPushToTalk.Value);
-                if (isKeyDown && !_wasKeyDown) _isToggleOn = !_isToggleOn;
+                if (isKeyDown && !_wasKeyDown) 
+                {
+                    _isToggleOn = !_isToggleOn;
+                }
                 _wasKeyDown = isKeyDown;
                 return _isToggleOn;
             }
+                
             return false;
         }
 
-        // Called by VoiceRouter when data arrives for THIS player
-        public void ReceiveNetworkData(byte[] data)
+        private Sprite CreateCircleSprite()
         {
-            if (IsLocalPlayer) return; // Ignore own packets
-
-            uint bytesWritten;
-            EVoiceResult result = SteamUser.DecompressVoice(
-                data, (uint)data.Length,
-                _netDecompressBuffer, (uint)_netDecompressBuffer.Length,
-                out bytesWritten, SteamUser.GetVoiceOptimalSampleRate()
-            );
-
-            if (result == EVoiceResult.k_EVoiceResultOK && bytesWritten > 0)
-            {
-                byte[] pcm = new byte[bytesWritten];
-                Array.Copy(_netDecompressBuffer, pcm, bytesWritten);
-                
-                if (CalculateAmplitude(pcm, (int)bytesWritten) >= Main.CfgMicThreshold.Value)
-                {
-                    AddToAudioQueue(pcm, (int)bytesWritten);
-                    SetSpeaking();
+            int res = 64;
+            Texture2D tex = new Texture2D(res, res);
+            Color[] cols = new Color[res*res];
+            float r = res/2f;
+            Vector2 c = new Vector2(r,r);
+            for(int y=0;y<res;y++){
+                for(int x=0;x<res;x++){
+                    float d = Vector2.Distance(new Vector2(x,y), c);
+                    cols[y*res+x] = d < r ? Color.white : Color.clear;
                 }
             }
-        }
-
-        private void ProcessLoopback(byte[] compressedData)
-        {
-            uint bytesWritten;
-            SteamUser.DecompressVoice(compressedData, (uint)compressedData.Length, _decompressedBuffer, (uint)_decompressedBuffer.Length, out bytesWritten, SteamUser.GetVoiceOptimalSampleRate());
-            
-            if (bytesWritten > 0)
-            {
-                byte[] pcm = new byte[bytesWritten];
-                Array.Copy(_decompressedBuffer, pcm, bytesWritten);
-                AddToAudioQueue(pcm, (int)bytesWritten);
-                SetSpeaking();
-                
-                if (!_audioSource.isPlaying) _audioSource.Play();
-                int dist = (_readPosition - _audioSource.timeSamples + _readBuffer.Length) % _readBuffer.Length;
-                if (dist > 12000) _audioSource.timeSamples = (_readPosition - 2000 + _readBuffer.Length) % _readBuffer.Length;
-            }
-        }
-
-        private void AddToAudioQueue(byte[] rawBytes, int length)
-        {
-            int sampleCount = length / 2;
-            float[] floatData = new float[sampleCount];
-            for (int i = 0; i < sampleCount; i++)
-            {
-                short val = BitConverter.ToInt16(rawBytes, i * 2);
-                floatData[i] = val / 32768.0f;
-            }
-
-            lock (_queueLock)
-            {
-                _audioQueue.Enqueue(floatData);
-                if (_audioQueue.Count > 50) _audioQueue.Dequeue(); 
-            }
-        }
-
-        private void ProcessAudioQueue()
-        {
-            lock (_queueLock)
-            {
-                if (_audioQueue.Count > 0)
-                {
-                    float[] data = _audioQueue.Dequeue();
-                    int writeStart = _readPosition;
-                    int len = data.Length;
-                    int bufferLen = _readBuffer.Length;
-
-                    for (int i = 0; i < len; i++)
-                    {
-                        _readBuffer[(writeStart + i) % bufferLen] = data[i];
-                    }
-                    
-                    _readPosition = (writeStart + len) % bufferLen;
-                    _streamingClip.SetData(_readBuffer, 0);
-
-                    if (!_isPlaying)
-                    {
-                        _audioSource.Play();
-                        _isPlaying = true;
-                    }
-                }
-            }
-        }
-
-        private void SetSpeaking()
-        {
-            _lastSpeakingTime = Time.time;
-            if (_indicator != null) _indicator.SetSpeaking();
-            if (_lipSync != null) _lipSync.SetSpeaking();
-        }
-
-        public bool IsSpeaking() => (Time.time - _lastSpeakingTime < 0.25f);
-
-        private float CalculateAmplitude(byte[] pcmData, int length)
-        {
-            float sum = 0;
-            int count = length / 2;
-            for (int i = 0; i < count; i++) sum += Mathf.Abs(BitConverter.ToInt16(pcmData, i * 2) / 32768.0f);
-            return count == 0 ? 0 : sum / count;
+            tex.SetPixels(cols); tex.Apply();
+            return Sprite.Create(tex, new Rect(0,0,res,res), new Vector2(0.5f,0.5f));
         }
     }
 
     // -----------------------------------------------------------
-    // HARMONY: ATTACH VOICE MANAGER TO PLAYERS
-    // -----------------------------------------------------------
-    [HarmonyPatch(typeof(Player), "Start")]
-    public class PlayerStartPatch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(Player __instance)
-        {
-            if (__instance.GetComponent<VoiceManager>() == null)
-            {
-                __instance.gameObject.AddComponent<VoiceManager>();
-            }
-        }
-    }
-
-    [HarmonyPatch]
-    public class LobbyPatches
-    {
-        private const string LOBBY_KEY = "vclyss_enabled";
-
-        [HarmonyPatch(typeof(SteamMatchmaking), nameof(SteamMatchmaking.JoinLobby))]
-        [HarmonyPostfix]
-        public static void OnJoinLobby(CSteamID steamIDLobby)
-        {
-            Main.Instance.StartCoroutine(CheckLobbyStatus(steamIDLobby));
-        }
-
-        [HarmonyPatch(typeof(SteamMatchmaking), nameof(SteamMatchmaking.CreateLobby))]
-        [HarmonyPostfix]
-        public static void OnCreateLobby()
-        {
-            Main.Instance.StartCoroutine(SetLobbyStatus());
-        }
-
-        private static IEnumerator SetLobbyStatus()
-        {
-            yield return new WaitForSeconds(1.0f);
-            CSteamID currentLobby = new CSteamID(SteamLobby._current._currentLobbyID);
-            
-            if (currentLobby.m_SteamID != 0 && Main.CfgEnabled.Value)
-            {
-                SteamMatchmaking.SetLobbyData(currentLobby, LOBBY_KEY, "true");
-                SteamUser.StartVoiceRecording();
-                Main.Log.LogInfo("Host Lobby Created: Voice Chat ENABLED.");
-            }
-        }
-
-        private static IEnumerator CheckLobbyStatus(CSteamID lobbyId)
-        {
-            yield return new WaitForSeconds(2.0f);
-            string value = SteamMatchmaking.GetLobbyData(lobbyId, LOBBY_KEY);
-
-            if (!string.IsNullOrEmpty(value) && value == "true" && Main.CfgEnabled.Value)
-            {
-                SteamUser.StartVoiceRecording();
-                Main.Log.LogInfo($"Joined Modded Lobby: Voice Chat ENABLED.");
-            }
-            else
-            {
-                SteamUser.StopVoiceRecording();
-                Main.Log.LogInfo("Voice Chat DISABLED.");
-            }
-        }
-    }
-
-    // -----------------------------------------------------------
-    // VISUALS
+    // LIP SYNC
     // -----------------------------------------------------------
     public class LipSync : MonoBehaviour
     {
-        private float _lastTalkTime;
         private PlayerRaceModel _playerRaceModel;
         private bool _initialized = false;
         private Coroutine _mouthResetCoroutine;
@@ -566,7 +540,6 @@ namespace VCLYSS
         public void SetSpeaking()
         {
             if (!Main.CfgLipSync.Value || !_initialized || _playerRaceModel == null) return;
-            _lastTalkTime = Time.time;
             try {
                 _playerRaceModel.Set_MouthCondition((global::MouthCondition)MouthCondition.Open, 0.15f);
                 if (_mouthResetCoroutine != null) StopCoroutine(_mouthResetCoroutine);
@@ -578,69 +551,6 @@ namespace VCLYSS
         {
             yield return new WaitForSeconds(0.2f);
             if (_playerRaceModel != null) _playerRaceModel.Set_MouthCondition(global::MouthCondition.Closed, 0f);
-        }
-    }
-
-    public class VoiceIndicator : MonoBehaviour
-    {
-        private GameObject _iconObject;
-        private SpriteRenderer _renderer;
-        private float _lastTalkTime;
-        private Transform _cameraTransform;
-        private static Sprite _cachedSprite;
-
-        public void Initialize()
-        {
-            try {
-                _iconObject = new GameObject("VoiceIcon");
-                _iconObject.transform.SetParent(this.transform, false);
-                _iconObject.transform.localPosition = new Vector3(0, 3.14f, 0); 
-                _iconObject.transform.localScale = Vector3.one * 0.5f;
-                _renderer = _iconObject.AddComponent<SpriteRenderer>();
-                if (_cachedSprite == null) _cachedSprite = CreateBubbleSprite();
-                _renderer.sprite = _cachedSprite;
-                _renderer.color = new Color(1f, 0.6f, 0f, 0.9f);
-                _renderer.sortingLayerName = "Default";
-                _renderer.sortingOrder = 100;
-                _renderer.enabled = false;
-            } catch (Exception e) { Main.Log.LogError($"Indicator error: {e.Message}"); }
-        }
-
-        public void SetSpeaking() { if (Main.CfgShowHeadIcons.Value) _lastTalkTime = Time.time; }
-
-        private void Update()
-        {
-            if (!Main.CfgShowHeadIcons.Value) { if (_renderer != null) _renderer.enabled = false; return; }
-            bool isTalking = (Time.time - _lastTalkTime < 0.25f);
-            if (_renderer != null) {
-                _renderer.enabled = isTalking;
-                if (isTalking) {
-                    if (_cameraTransform == null) { if (Camera.main != null) _cameraTransform = Camera.main.transform; else return; }
-                    _iconObject.transform.LookAt(transform.position + _cameraTransform.rotation * Vector3.forward, _cameraTransform.rotation * Vector3.up);
-                }
-            }
-        }
-
-        private Sprite CreateBubbleSprite()
-        {
-            int size = 64;
-            Texture2D tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
-            Color[] pixels = new Color[size * size];
-            Color white = new Color(1f, 1f, 1f, 0.95f);
-            Color outline = new Color(0.15f, 0.15f, 0.15f, 0.9f);
-            Color clear = Color.clear;
-            Vector2 center = new Vector2(size / 2f, size / 2f);
-            float radius = size / 2f - 4;
-            for (int y = 0; y < size; y++) {
-                for (int x = 0; x < size; x++) {
-                    float dist = Vector2.Distance(new Vector2(x, y), center);
-                    if (dist < radius - 2f) pixels[y * size + x] = white;
-                    else if (dist < radius) pixels[y * size + x] = outline;
-                    else pixels[y * size + x] = clear;
-                }
-            }
-            tex.SetPixels(pixels); tex.Apply();
-            return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f);
         }
     }
 
@@ -668,7 +578,7 @@ namespace VCLYSS
             float yPos = 20f; 
 
             GUILayout.BeginArea(new Rect(xPos, yPos, 250f, Screen.height));
-            foreach (var vm in VoiceRouter.ActiveManagers)
+            foreach (var vm in VoiceSystem.ActiveManagers)
             {
                 if (vm.IsSpeaking())
                 {
