@@ -25,6 +25,7 @@ namespace VCLYSS
         public static Main Instance;
         internal static ManualLogSource Log;
         private Harmony _harmony;
+        private bool _packetsRegistered = false;
 
         // --- CONFIGURATION ---
         public static ConfigEntry<bool> CfgEnabled;
@@ -57,34 +58,31 @@ namespace VCLYSS
             _harmony = new Harmony(ModInfo.GUID);
             _harmony.PatchAll();
 
-            StartCoroutine(RegisterPacketDelayed());
+            // [CHANGE] Packets are NOT registered here. 
+            // They are registered by VoiceSystem after the session is fully ready.
 
             var go = new GameObject("VCLYSS_System");
             DontDestroyOnLoad(go);
             go.AddComponent<VoiceSystem>();
             go.AddComponent<VoiceOverlay>();
 
-            Logger.LogInfo($"[{ModInfo.NAME}] Loaded. Voice System Started.");
+            Logger.LogInfo($"[{ModInfo.NAME}] Loaded. Waiting for Player...");
         }
 
-        private IEnumerator RegisterPacketDelayed()
+        // [FIX] Public method called by VoiceSystem when it's safe to receive data
+        public void RegisterPackets()
         {
-            // [FIX] Wait until player is fully loaded IN_GAME before registering listener
-            // This prevents packet spam from blocking threads during the initial loading screen
-            while (Player._mainPlayer == null || Player._mainPlayer._currentGameCondition != GameCondition.IN_GAME)
-            {
-                yield return new WaitForSeconds(1f);
-            }
-
-            // Extra safety buffer for assets to initialize
-            yield return new WaitForSeconds(2f);
-
+            if (_packetsRegistered) return;
+            
             CodeTalkerNetwork.RegisterBinaryListener<VoicePacket>(OnVoicePacketReceived);
-            if (CfgDebugMode.Value) Main.Log.LogDebug("Voice packet listener registered");
+            _packetsRegistered = true;
+            
+            if (CfgDebugMode.Value) Log.LogDebug("Packet Listener Registered.");
         }
 
         private void OnVoicePacketReceived(PacketHeader header, BinaryPacketBase packet)
         {
+            // [SAFETY] Strictly gate packets
             if (!VoiceSystem.Instance || !VoiceSystem.Instance.IsSessionReady) return;
 
             if (packet is VoicePacket voicePkt)
@@ -198,45 +196,57 @@ namespace VCLYSS
         public override void Deserialize(byte[] data) { VoiceData = data; }
     }
 
+    // -----------------------------------------------------------
+    // GLOBAL SYSTEM
+    // -----------------------------------------------------------
     public class VoiceSystem : MonoBehaviour
     {
         public static VoiceSystem Instance;
         public static List<VoiceManager> ActiveManagers = new List<VoiceManager>();
         public static bool IsVoiceAllowedInLobby = false;
+        
         public bool IsSessionReady = false;
 
         void Awake() 
         { 
             Instance = this; 
-            StartCoroutine(SessionMonitor());
             StartCoroutine(PlayerScanner());
         }
 
-        private IEnumerator SessionMonitor()
+        // Called by Harmony Patch
+        public void SetSessionReady(bool ready)
         {
-            WaitForSeconds wait = new WaitForSeconds(0.5f);
-            while (true)
+            if (ready)
             {
-                bool isMainPlayerReady = Player._mainPlayer != null && Player._mainPlayer._currentGameCondition == GameCondition.IN_GAME;
-
-                if (isMainPlayerReady && !IsSessionReady)
-                {
-                    // [FIX] Added safety buffer after IN_GAME detection
-                    // This ensures the player model and assets are fully loaded before we start processing packets
-                    if (Main.CfgDebugMode.Value) Main.Log.LogDebug("Player In-Game detected. Waiting for assets...");
-                    yield return new WaitForSeconds(2.0f);
-
-                    IsSessionReady = true;
-                    if (Main.CfgDebugMode.Value) Main.Log.LogDebug("VCLYSS Ready: Player is IN_GAME.");
-                }
-                else if (!isMainPlayerReady && IsSessionReady)
-                {
-                    IsSessionReady = false;
-                    ActiveManagers.Clear();
-                    if (Main.CfgDebugMode.Value) Main.Log.LogDebug("VCLYSS Paused: Player is not IN_GAME.");
-                }
-                yield return wait;
+                StartCoroutine(WaitForAssetsAndEnable());
             }
+            else
+            {
+                IsSessionReady = false;
+                ActiveManagers.Clear();
+                if (Main.CfgDebugMode.Value) Main.Log.LogDebug("VCLYSS Paused: Player left game.");
+            }
+        }
+
+        private IEnumerator WaitForAssetsAndEnable()
+        {
+            // Wait for visual model
+            while (Player._mainPlayer == null || Player._mainPlayer._pVisual == null)
+            {
+                yield return new WaitForSeconds(0.5f);
+            }
+            
+            // [FIX] Wait 5 seconds to let other game packets settle
+            if (Main.CfgDebugMode.Value) Main.Log.LogDebug("Player Loaded. Waiting for network to settle...");
+            yield return new WaitForSeconds(5.0f);
+
+            // [FIX] Initialize before enabling
+            IsSessionReady = true;
+            
+            // [FIX] Register packets now
+            Main.Instance.RegisterPackets();
+
+            if (Main.CfgDebugMode.Value) Main.Log.LogDebug("VCLYSS Ready: Player IN_GAME and Assets Loaded.");
         }
 
         private IEnumerator PlayerScanner()
@@ -314,10 +324,34 @@ namespace VCLYSS
         }
     }
 
+    // -----------------------------------------------------------
+    // HARMONY PATCHES
+    // -----------------------------------------------------------
     [HarmonyPatch]
-    public class LobbyPatches
+    public class GameStatePatches
     {
         private const string LOBBY_KEY = "vclyss_version";
+
+        [HarmonyPatch(typeof(Player), "OnGameConditionChange")]
+        [HarmonyPostfix]
+        public static void OnGameConditionChange(ref Player __instance, GameCondition _newCondition)
+        {
+            bool flag = __instance._currentGameCondition == GameCondition.IN_GAME && __instance.isLocalPlayer;
+            
+            if (flag)
+            {
+                Main.Log.LogInfo($"[VCLYSS] Player {__instance.gameObject.name} entered game. Initializing...");
+                
+                if (VoiceSystem.Instance != null)
+                {
+                    VoiceSystem.Instance.SetSessionReady(true);
+                }
+            }
+            else if (__instance.isLocalPlayer && _newCondition != GameCondition.IN_GAME)
+            {
+                if (VoiceSystem.Instance != null) VoiceSystem.Instance.SetSessionReady(false);
+            }
+        }
 
         [HarmonyPatch(typeof(SteamMatchmaking), nameof(SteamMatchmaking.JoinLobby))]
         [HarmonyPostfix]
@@ -413,9 +447,7 @@ namespace VCLYSS
         {
             while (VoiceSystem.GetSteamIDFromPlayer(AttachedPlayer) == 0) yield return new WaitForSeconds(0.5f);
 
-            while (Player._mainPlayer == null || 
-                   Player._mainPlayer._currentGameCondition != GameCondition.IN_GAME ||
-                   AttachedPlayer == null)
+            while (!VoiceSystem.Instance.IsSessionReady)
             {
                 yield return new WaitForSeconds(0.5f);
             }
@@ -458,6 +490,7 @@ namespace VCLYSS
             emitter.transform.localPosition = new Vector3(0, 1.7f, 0); 
 
             _audioSource = emitter.AddComponent<AudioSource>();
+            // [FIX] Loop false to prevent stale audio playback
             _audioSource.loop = false; 
             _audioSource.playOnAwake = false;
             _audioSource.dopplerLevel = 0f; 
@@ -640,7 +673,10 @@ namespace VCLYSS
                             {
                                 if (vm != this && vm.AttachedPlayer != null)
                                 {
-                                    CodeTalkerNetwork.SendNetworkPacket(vm.AttachedPlayer, packet, Compressors.CompressionType.GZip, CompressionLevel.Fastest);
+                                    if (IsPlayerLoaded(vm.AttachedPlayer))
+                                    {
+                                        CodeTalkerNetwork.SendNetworkPacket(vm.AttachedPlayer, packet, Compressors.CompressionType.GZip, CompressionLevel.Fastest);
+                                    }
                                 }
                             }
                             
@@ -652,6 +688,14 @@ namespace VCLYSS
                     }
                 }
             }
+        }
+
+        private bool IsPlayerLoaded(Player p)
+        {
+            if (p == null) return false;
+            if (p._pVisual == null) return false;
+            if (p._pVisual._playerRaceModel == null) return false; 
+            return true;
         }
 
         public void ReceiveNetworkData(byte[] compressedData)
@@ -707,6 +751,7 @@ namespace VCLYSS
             
             _streamingClip.SetData(_floatBuffer, 0);
 
+            // [FIX] Loop false + explicit Play to prevent looping
             _audioSource.loop = false;
 
             if (!_audioSource.isPlaying) 
