@@ -7,8 +7,11 @@ using CodeTalker.Packets;
 using Steamworks;
 using UnityEngine;
 using UnityEngine.Audio;
+using System;
 using System.Collections;
+using System.Collections.Generic; // Added for List/Dictionary
 using System.Reflection;
+using System.IO; // Added for Stream
 using CodeTalker; 
 using Nessie.ATLYSS.EasySettings;
 using CompressionLevel = System.IO.Compression.CompressionLevel; 
@@ -36,7 +39,6 @@ namespace VCLYSS
         public static ConfigEntry<bool> CfgSpatialBlending; 
         public static ConfigEntry<bool> CfgShowOverlay;
         public static ConfigEntry<bool> CfgShowHeadIcons;
-        // Removed CfgShowRangeVisual
         public static ConfigEntry<bool> CfgLipSync; 
         public enum MicMode { PushToTalk, Toggle, AlwaysOn }
 
@@ -80,25 +82,15 @@ namespace VCLYSS
         private void InitConfig()
         {
             CfgEnabled = Config.Bind("1. General", "Voice Chat Active", true, "Master Switch");
-            
-            // Default 1.0, Range up to 5.0 for boost
             CfgMasterVolume = Config.Bind("1. General", "Master Volume", 1.0f, new ConfigDescription("Incoming Voice Volume Boost (0 = Mute)", new AcceptableValueRange<float>(0.0f, 5.0f)));
-            
             CfgMuteAll = Config.Bind("1. General", "Mute Everyone (Panic)", false, "Panic button to silence all incoming voice");
             CfgMicMode = Config.Bind("2. Input", "Input Mode", MicMode.PushToTalk, "Input Method");
-            
-            // Default Key 'T'
             CfgPushToTalk = Config.Bind("2. Input", "Push To Talk Key", KeyCode.T, "Bind for PTT/Toggle");
-            
             CfgMicThreshold = Config.Bind("2. Input", "Mic Activation Threshold", 0.05f, new ConfigDescription("Gate threshold", new AcceptableValueRange<float>(0.0f, 0.5f)));
             CfgMicTest = Config.Bind("2. Input", "Mic Test (Loopback)", false, "Hear your own voice to test settings");
-            
-            // Max Range increased to 256
             CfgMinDistance = Config.Bind("3. Spatial", "Min Distance", 5.0f, new ConfigDescription("Distance where audio is 100% volume", new AcceptableValueRange<float>(1.0f, 50.0f)));
             CfgMaxDistance = Config.Bind("3. Spatial", "Max Distance", 40.0f, new ConfigDescription("Distance where audio becomes silent", new AcceptableValueRange<float>(10.0f, 256.0f)));
-            
             CfgSpatialBlending = Config.Bind("3. Spatial", "3D Spatial Audio", true, "Enable 3D Directional Audio");
-            
             CfgShowOverlay = Config.Bind("4. Visuals", "Show Voice Overlay", true, "Show list of speakers in top right");
             CfgShowHeadIcons = Config.Bind("4. Visuals", "Show Head Icons (Bubble)", true, "Show GMod-style bubble");
             CfgLipSync = Config.Bind("4. Visuals", "Enable Lip Sync", true, "Animate mouths when talking");
@@ -127,6 +119,60 @@ namespace VCLYSS
         }
     }
 
+    // -----------------------------------------------------------
+    // PUBLIC API FOR OTHER MODS
+    // -----------------------------------------------------------
+    public static class VoiceAPI
+    {
+        // Events
+        public static event Action<Player> OnPlayerStartSpeaking;
+        public static event Action<Player> OnPlayerStopSpeaking;
+
+        /// <summary>
+        /// Checks if the specific player is currently transmitting voice.
+        /// </summary>
+        public static bool IsPlayerSpeaking(Player player)
+        {
+            var vm = VoiceSystem.Instance.GetManagerForPlayer(player);
+            return vm != null && vm.IsSpeaking();
+        }
+
+        /// <summary>
+        /// Mutes a specific player locally (does not affect others).
+        /// Useful for blocking or radio mods.
+        /// </summary>
+        public static void SetPlayerMute(Player player, bool isMuted)
+        {
+            var vm = VoiceSystem.Instance.GetManagerForPlayer(player);
+            if (vm != null) vm.SetExternalMute(isMuted);
+        }
+
+        /// <summary>
+        /// Sets a volume multiplier for a specific player (0.0 to 2.0+).
+        /// Default is 1.0. Useful for distance attenuation mods or "deafness" effects.
+        /// </summary>
+        public static void SetPlayerVolume(Player player, float volumeMultiplier)
+        {
+            var vm = VoiceSystem.Instance.GetManagerForPlayer(player);
+            if (vm != null) vm.SetExternalGain(volumeMultiplier);
+        }
+
+        /// <summary>
+        /// Forces a player to be 2D (Global) or 3D (Spatial).
+        /// Pass null to reset to Config default.
+        /// Useful for Walkie-Talkie mods (Force 2D) or Phone mods.
+        /// </summary>
+        public static void SetPlayerSpatialOverride(Player player, bool? forceSpatial)
+        {
+            var vm = VoiceSystem.Instance.GetManagerForPlayer(player);
+            if (vm != null) vm.SetSpatialOverride(forceSpatial);
+        }
+
+        // Internal Event Triggers
+        internal static void TriggerStartSpeaking(Player p) => OnPlayerStartSpeaking?.Invoke(p);
+        internal static void TriggerStopSpeaking(Player p) => OnPlayerStopSpeaking?.Invoke(p);
+    }
+
     public class VoicePacket : BinaryPacketBase
     {
         public override string PacketSignature => "VCLYSS_VOICE";
@@ -145,7 +191,6 @@ namespace VCLYSS
         public static VoiceSystem Instance;
         public static List<VoiceManager> ActiveManagers = new List<VoiceManager>();
         
-        // HOST CHECK FLAG
         public static bool IsVoiceAllowedInLobby = false;
 
         void Awake() 
@@ -187,12 +232,20 @@ namespace VCLYSS
             }
         }
 
+        // Helper for API
+        public VoiceManager GetManagerForPlayer(Player p)
+        {
+            if (p == null) return null;
+            return p.GetComponent<VoiceManager>();
+        }
+
         private VoiceManager FindManager(ulong steamID)
         {
             for (int i = 0; i < ActiveManagers.Count; i++)
             {
                 if (ActiveManagers[i].OwnerID == steamID) return ActiveManagers[i];
             }
+            // Fallback
             Player[] players = FindObjectsOfType<Player>();
             foreach(var p in players) 
             {
@@ -219,9 +272,6 @@ namespace VCLYSS
         }
     }
 
-    // -----------------------------------------------------------
-    // LOBBY PATCHES (Host Requirement)
-    // -----------------------------------------------------------
     [HarmonyPatch]
     public class LobbyPatches
     {
@@ -282,6 +332,11 @@ namespace VCLYSS
         public ulong OwnerID;
         public bool IsLocalPlayer = false;
 
+        // API Exposed Fields
+        private float _externalGain = 1.0f;
+        private bool _externalMute = false;
+        private bool? _spatialOverride = null; // null = use config, true = 3D, false = 2D
+
         private AudioSource _audioSource;
         private GameObject _bubbleObject;
         private SpriteRenderer _bubbleRenderer;
@@ -305,6 +360,9 @@ namespace VCLYSS
         private float _lastPacketTime = 0f;
         private bool _isPlaying = false;
         private bool _audioInitialized = false;
+
+        // API Event State
+        private bool _eventIsSpeaking = false;
 
         void Awake()
         {
@@ -338,6 +396,16 @@ namespace VCLYSS
             if (IsLocalPlayer && _isRecording) SteamUser.StopVoiceRecording();
         }
 
+        // --- API INTERFACE METHODS ---
+        public void SetExternalGain(float gain) { _externalGain = gain; }
+        public void SetExternalMute(bool mute) { _externalMute = mute; }
+        public void SetSpatialOverride(bool? spatial) 
+        { 
+            _spatialOverride = spatial; 
+            ApplyAudioSettings(); 
+        }
+        // -----------------------------
+
         private void InitializeAudio()
         {
             GameObject emitter = new GameObject("VoiceEmitter");
@@ -366,6 +434,7 @@ namespace VCLYSS
             _sampleRate = (int)SteamUser.GetVoiceOptimalSampleRate();
             int bufferLen = 44100 * 2; 
             _floatBuffer = new float[bufferLen];
+            _bufferLength = bufferLen; // Fixed missing assignment
             
             _streamingClip = AudioClip.Create($"Voice_{OwnerID}", bufferLen, 1, _sampleRate, false);
             _streamingClip.SetData(_floatBuffer, 0);
@@ -412,8 +481,7 @@ namespace VCLYSS
         {
             if (_audioSource == null) return;
             
-            // Set base volume to 1.0 (Boost happens in ProcessPCM)
-            _audioSource.volume = 1.0f; 
+            _audioSource.volume = 1.0f; // Base volume, gain applied in PCM
             
             if (IsLocalPlayer) 
             {
@@ -421,7 +489,10 @@ namespace VCLYSS
             }
             else
             {
-                _audioSource.spatialBlend = Main.CfgSpatialBlending.Value ? 1.0f : 0.0f;
+                // Logic: API Override > Config > Default
+                bool useSpatial = _spatialOverride.HasValue ? _spatialOverride.Value : Main.CfgSpatialBlending.Value;
+                
+                _audioSource.spatialBlend = useSpatial ? 1.0f : 0.0f;
                 _audioSource.minDistance = Main.CfgMinDistance.Value;
                 _audioSource.maxDistance = Main.CfgMaxDistance.Value;
                 _audioSource.rolloffMode = AudioRolloffMode.Linear; 
@@ -443,6 +514,15 @@ namespace VCLYSS
                 FlushBuffer(); 
                 _isPlaying = false;
                 _lastVolume = 0f;
+            }
+
+            // Event State Check
+            bool currentlySpeaking = IsSpeaking();
+            if (currentlySpeaking != _eventIsSpeaking)
+            {
+                _eventIsSpeaking = currentlySpeaking;
+                if (currentlySpeaking) VoiceAPI.TriggerStartSpeaking(AttachedPlayer);
+                else VoiceAPI.TriggerStopSpeaking(AttachedPlayer);
             }
 
             UpdateVisuals();
@@ -501,6 +581,7 @@ namespace VCLYSS
                                     CodeTalkerNetwork.SendNetworkPacket(vm.AttachedPlayer, packet, Compressors.CompressionType.GZip, CompressionLevel.Fastest);
                                 }
                             }
+                            // Local visual feedback
                             _lastVolume = Mathf.Lerp(_lastVolume, 0.8f, Time.deltaTime * 20f); 
                             if(_lipSync != null) _lipSync.SetSpeaking();
                             _lastPacketTime = Time.time; 
@@ -513,6 +594,8 @@ namespace VCLYSS
 
         public void ReceiveNetworkData(byte[] compressedData)
         {
+            if (_externalMute) return; // API Mute check
+
             if (IsLocalPlayer && !Main.CfgMicTest.Value) return; 
 
             uint bytesWritten;
@@ -531,7 +614,8 @@ namespace VCLYSS
             int sampleCount = length / 2; 
             float maxVol = 0f;
             
-            float gain = Main.CfgMasterVolume.Value; 
+            // Combine Config Gain with API Gain
+            float gain = Main.CfgMasterVolume.Value * _externalGain; 
 
             for (int i = 0; i < sampleCount; i++)
             {
@@ -576,19 +660,23 @@ namespace VCLYSS
             if (_bubbleObject == null) return;
             if (!Main.CfgShowHeadIcons.Value) { _bubbleObject.SetActive(false); return; }
 
-            if (_lastVolume > 0.01f)
+            // Check if actually speaking OR if local recording
+            bool showBubble = _lastVolume > 0.01f || (IsLocalPlayer && _isRecording);
+
+            if (showBubble)
             {
                 _bubbleObject.SetActive(true);
                 if (Camera.main != null) _bubbleObject.transform.LookAt(Camera.main.transform);
                 _bubbleObject.transform.Rotate(Vector3.up, 180f * Time.deltaTime);
                 float scale = 0.5f + (_lastVolume * 0.5f);
                 _bubbleObject.transform.localScale = Vector3.one * scale;
-                _lastVolume = Mathf.Lerp(_lastVolume, 0f, Time.deltaTime * 5f);
+                // Decay visual volume
+                if (!IsLocalPlayer) _lastVolume = Mathf.Lerp(_lastVolume, 0f, Time.deltaTime * 5f);
             }
             else _bubbleObject.SetActive(false);
         }
 
-        public bool IsSpeaking() => _lastVolume > 0.01f;
+        public bool IsSpeaking() => _lastVolume > 0.01f || (IsLocalPlayer && _isRecording);
 
         private void CheckLocalPlayerStatus()
         {
@@ -625,9 +713,6 @@ namespace VCLYSS
         }
     }
 
-    // -----------------------------------------------------------
-    // LIP SYNC
-    // -----------------------------------------------------------
     public class LipSync : MonoBehaviour
     {
         private PlayerRaceModel _playerRaceModel;
