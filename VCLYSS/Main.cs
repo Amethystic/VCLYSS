@@ -39,6 +39,7 @@ namespace VCLYSS
         public static ConfigEntry<bool> CfgSpatialBlending; 
         public static ConfigEntry<bool> CfgShowOverlay;
         public static ConfigEntry<bool> CfgShowHeadIcons;
+        public static ConfigEntry<float> CfgBubbleScale; 
         public static ConfigEntry<bool> CfgLipSync; 
         public static ConfigEntry<bool> CfgDebugMode; 
 
@@ -68,26 +69,37 @@ namespace VCLYSS
 
         private IEnumerator RegisterPacketDelayed()
         {
+            // [FIX] Wait until player is fully loaded IN_GAME before registering listener
+            // This prevents packet spam from blocking threads during the initial loading screen
+            while (Player._mainPlayer == null || Player._mainPlayer._currentGameCondition != GameCondition.IN_GAME)
+            {
+                yield return new WaitForSeconds(1f);
+            }
+
+            // Extra safety buffer for assets to initialize
             yield return new WaitForSeconds(2f);
+
             CodeTalkerNetwork.RegisterBinaryListener<VoicePacket>(OnVoicePacketReceived);
-            if (CfgDebugMode.Value) Main.Log.LogInfo("Voice packet listener registered");
+            if (CfgDebugMode.Value) Main.Log.LogDebug("Voice packet listener registered");
         }
 
         private void OnVoicePacketReceived(PacketHeader header, BinaryPacketBase packet)
         {
+            if (!VoiceSystem.Instance || !VoiceSystem.Instance.IsSessionReady) return;
+
             if (packet is VoicePacket voicePkt)
             {
                 if (voicePkt.VoiceData == null || voicePkt.VoiceData.Length == 0) return;
                 
                 if (voicePkt.VoiceData.Length > 65535) 
                 {
-                    if (CfgDebugMode.Value) Main.Log.LogWarning($"[Security] Dropped oversized packet from {header.SenderID} ({voicePkt.VoiceData.Length} bytes)");
+                    if (CfgDebugMode.Value) Main.Log.LogWarning($"[Security] Dropped oversized packet from {header.SenderID}");
                     return;
                 }
 
                 if (CfgDebugMode.Value)
                 {
-                    Main.Log.LogDebug($"[Flow] Recv Voice Packet | Sender: {header.SenderID} | Size: {voicePkt.VoiceData.Length}");
+                    Main.Log.LogDebug($"[Flow] Recv Packet | Sender: {header.SenderID} | Size: {voicePkt.VoiceData.Length}");
                 }
 
                 VoiceSystem.Instance.RoutePacket(header.SenderID, voicePkt.VoiceData);
@@ -111,9 +123,10 @@ namespace VCLYSS
             
             CfgShowOverlay = Config.Bind("4. Visuals", "Show Voice Overlay", true, "Show list of speakers in top right");
             CfgShowHeadIcons = Config.Bind("4. Visuals", "Show Head Icons (Bubble)", true, "Show GMod-style bubble");
+            CfgBubbleScale = Config.Bind("4. Visuals", "Bubble Scale", 0.2f, new ConfigDescription("Size of the speech bubble", new AcceptableValueRange<float>(0.05f, 2.0f)));
             CfgLipSync = Config.Bind("4. Visuals", "Enable Lip Sync", true, "Animate mouths when talking");
 
-            CfgDebugMode = Config.Bind("5. Advanced", "Debug Mode (Verbose)", false, "Enable traffic flow logs and detailed status updates. Warning: Spams console.");
+            CfgDebugMode = Config.Bind("5. Advanced", "Debug Mode (Verbose)", false, "Enable traffic flow logs. Warning: Spams console.");
         }
 
         private void AddSettings()
@@ -135,6 +148,7 @@ namespace VCLYSS
             tab.AddHeader("Visuals");
             tab.AddToggle(CfgShowOverlay);
             tab.AddToggle(CfgShowHeadIcons);
+            tab.AddSlider(CfgBubbleScale);
             tab.AddToggle(CfgLipSync);
             tab.AddHeader("Advanced");
             tab.AddToggle(CfgDebugMode);
@@ -188,13 +202,41 @@ namespace VCLYSS
     {
         public static VoiceSystem Instance;
         public static List<VoiceManager> ActiveManagers = new List<VoiceManager>();
-        
         public static bool IsVoiceAllowedInLobby = false;
+        public bool IsSessionReady = false;
 
         void Awake() 
         { 
             Instance = this; 
+            StartCoroutine(SessionMonitor());
             StartCoroutine(PlayerScanner());
+        }
+
+        private IEnumerator SessionMonitor()
+        {
+            WaitForSeconds wait = new WaitForSeconds(0.5f);
+            while (true)
+            {
+                bool isMainPlayerReady = Player._mainPlayer != null && Player._mainPlayer._currentGameCondition == GameCondition.IN_GAME;
+
+                if (isMainPlayerReady && !IsSessionReady)
+                {
+                    // [FIX] Added safety buffer after IN_GAME detection
+                    // This ensures the player model and assets are fully loaded before we start processing packets
+                    if (Main.CfgDebugMode.Value) Main.Log.LogDebug("Player In-Game detected. Waiting for assets...");
+                    yield return new WaitForSeconds(2.0f);
+
+                    IsSessionReady = true;
+                    if (Main.CfgDebugMode.Value) Main.Log.LogDebug("VCLYSS Ready: Player is IN_GAME.");
+                }
+                else if (!isMainPlayerReady && IsSessionReady)
+                {
+                    IsSessionReady = false;
+                    ActiveManagers.Clear();
+                    if (Main.CfgDebugMode.Value) Main.Log.LogDebug("VCLYSS Paused: Player is not IN_GAME.");
+                }
+                yield return wait;
+            }
         }
 
         private IEnumerator PlayerScanner()
@@ -204,13 +246,16 @@ namespace VCLYSS
             {
                 try
                 {
-                    Player[] allPlayers = FindObjectsOfType<Player>();
-                    foreach (var p in allPlayers)
+                    if (IsSessionReady)
                     {
-                        if (p != null && p.GetComponent<VoiceManager>() == null)
+                        Player[] allPlayers = FindObjectsOfType<Player>();
+                        foreach (var p in allPlayers)
                         {
-                            if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[Scanner] Attaching VoiceManager to {p._nickname}");
-                            p.gameObject.AddComponent<VoiceManager>();
+                            if (p != null && p.GetComponent<VoiceManager>() == null)
+                            {
+                                if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[Scanner] Attaching VoiceManager to {p._nickname}");
+                                p.gameObject.AddComponent<VoiceManager>();
+                            }
                         }
                     }
                 }
@@ -222,11 +267,9 @@ namespace VCLYSS
         public void RoutePacket(ulong senderID, byte[] data)
         {
             if (!Main.CfgEnabled.Value || Main.CfgMuteAll.Value || !IsVoiceAllowedInLobby) return;
-
             if (senderID == GetSteamIDFromPlayer(Player._mainPlayer)) return;
 
             VoiceManager target = FindManager(senderID);
-            
             if (target != null && target.OwnerID == senderID)
             {
                 target.ReceiveNetworkData(data);
@@ -337,6 +380,7 @@ namespace VCLYSS
         private SpriteRenderer _bubbleRenderer;
         private LipSync _lipSync;
         
+        private Vector3 _baseScale = Vector3.one;
         private static AudioMixerGroup _cachedVoiceMixer;
 
         private byte[] _compressedBuffer = new byte[8192]; 
@@ -369,6 +413,13 @@ namespace VCLYSS
         {
             while (VoiceSystem.GetSteamIDFromPlayer(AttachedPlayer) == 0) yield return new WaitForSeconds(0.5f);
 
+            while (Player._mainPlayer == null || 
+                   Player._mainPlayer._currentGameCondition != GameCondition.IN_GAME ||
+                   AttachedPlayer == null)
+            {
+                yield return new WaitForSeconds(0.5f);
+            }
+
             OwnerID = VoiceSystem.GetSteamIDFromPlayer(AttachedPlayer);
             VoiceSystem.ActiveManagers.Add(this);
 
@@ -380,6 +431,8 @@ namespace VCLYSS
             
             _audioInitialized = true;
             CheckLocalPlayerStatus();
+            
+            if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[Manager] Initialized for {AttachedPlayer._nickname}");
         }
 
         void Start() { if (_audioInitialized) CheckLocalPlayerStatus(); }
@@ -405,7 +458,7 @@ namespace VCLYSS
             emitter.transform.localPosition = new Vector3(0, 1.7f, 0); 
 
             _audioSource = emitter.AddComponent<AudioSource>();
-            _audioSource.loop = true; 
+            _audioSource.loop = false; 
             _audioSource.playOnAwake = false;
             _audioSource.dopplerLevel = 0f; 
 
@@ -439,12 +492,29 @@ namespace VCLYSS
         private void InitializeBubble()
         {
             _bubbleObject = new GameObject("VoiceBubble");
-            _bubbleObject.transform.SetParent(transform, false);
-            _bubbleObject.transform.localPosition = new Vector3(0, 3.8f, 0); 
+            
+            Transform playerEffects = AttachedPlayer.transform.Find("_playerEffects");
+            Transform nativeBubble = AttachedPlayer.transform.Find("_playerEffects/_effect_chatBubble");
+            
+            if (playerEffects != null && nativeBubble != null)
+            {
+                _bubbleObject.transform.SetParent(playerEffects, false);
+                _bubbleObject.transform.localPosition = nativeBubble.localPosition;
+            }
+            else
+            {
+                _bubbleObject.transform.SetParent(transform, false);
+                _bubbleObject.transform.localPosition = new Vector3(0, 4.5f, 0); 
+            }
             
             _bubbleRenderer = _bubbleObject.AddComponent<SpriteRenderer>();
             _bubbleRenderer.sprite = LoadVoiceSprite(); 
             _bubbleRenderer.color = Color.white; 
+            
+            var rot = _bubbleObject.AddComponent<RotateObject>();
+            Traverse.Create(rot).Field("_rotY").SetValue(3f);
+            Traverse.Create(rot).Field("_alwaysRun").SetValue(true);
+
             _bubbleObject.SetActive(false);
         }
 
@@ -493,8 +563,9 @@ namespace VCLYSS
         void Update()
         {
             if (!Main.CfgEnabled.Value || !_audioInitialized) return;
-            if (!IsLocalPlayer) CheckLocalPlayerStatus();
+            if (!VoiceSystem.Instance.IsSessionReady) return;
 
+            if (!IsLocalPlayer) CheckLocalPlayerStatus();
             if (!VoiceSystem.IsVoiceAllowedInLobby && !Main.CfgMicTest.Value) return;
 
             if (IsLocalPlayer) HandleMicInput();
@@ -539,6 +610,7 @@ namespace VCLYSS
             {
                 SteamUser.StopVoiceRecording();
                 _isRecording = false;
+                _lastVolume = 0f; 
             }
 
             if (_isRecording)
@@ -571,7 +643,7 @@ namespace VCLYSS
                                     CodeTalkerNetwork.SendNetworkPacket(vm.AttachedPlayer, packet, Compressors.CompressionType.GZip, CompressionLevel.Fastest);
                                 }
                             }
-
+                            
                             _lastVolume = Mathf.Lerp(_lastVolume, 0.8f, Time.deltaTime * 20f); 
                             if(_lipSync != null) _lipSync.SetSpeaking();
                             _lastPacketTime = Time.time; 
@@ -608,11 +680,8 @@ namespace VCLYSS
 
         private void ProcessPCMData(byte[] rawBytes, int length)
         {
-            if (length > rawBytes.Length) length = rawBytes.Length;
-
             int sampleCount = length / 2; 
             float maxVol = 0f;
-            
             float gain = Main.CfgMasterVolume.Value * _externalGain; 
 
             for (int i = 0; i < sampleCount; i++)
@@ -635,7 +704,10 @@ namespace VCLYSS
             for (int i = 0; i < silenceSamples; i++) _floatBuffer[(clearStart + i) % _bufferLength] = 0f;
 
             _lastVolume = Mathf.Lerp(_lastVolume, maxVol, Time.deltaTime * 10f);
+            
             _streamingClip.SetData(_floatBuffer, 0);
+
+            _audioSource.loop = false;
 
             if (!_audioSource.isPlaying) 
             {
@@ -664,10 +736,9 @@ namespace VCLYSS
             if (showBubble)
             {
                 _bubbleObject.SetActive(true);
-                if (Camera.main != null) _bubbleObject.transform.LookAt(Camera.main.transform);
-                _bubbleObject.transform.Rotate(Vector3.up, 180f * Time.deltaTime);
-                float scale = 0.5f + (_lastVolume * 0.5f);
-                _bubbleObject.transform.localScale = Vector3.one * scale;
+                float baseSize = Main.CfgBubbleScale.Value;
+                float animScale = baseSize + (baseSize * _lastVolume * 0.5f);
+                _bubbleObject.transform.localScale = Vector3.one * animScale;
             }
             else _bubbleObject.SetActive(false);
         }
