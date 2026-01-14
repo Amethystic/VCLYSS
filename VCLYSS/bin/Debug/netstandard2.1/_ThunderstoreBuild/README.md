@@ -1,11 +1,6 @@
 # VCLYSS
 **Voice Chat plugin for Atlyss multiplayer.**
 
-> ⚠️ **PRIVATE TESTING BUILD**
-> Please do not share this file outside of the Discord server.
-> However, please **DO** invite people to the server to help us test! We need to squash bugs before the public release.
-> [**Join the Testing Discord**](https://discord.gg/ePhX4Fb2we)
-
 Adds fully functional **Proximity Voice Chat** to ATLYSS. Talk to your friends, organize dungeon runs, or just hang out in the plaza with 3D spatial audio.
 
 ## Features
@@ -27,7 +22,7 @@ Adds fully functional **Proximity Voice Chat** to ATLYSS. Talk to your friends, 
 ## Settings
 Press **F1** (or your Mod Settings bind) to configure:
 
-*   **Input Mode:** Choose between **Push-to-Talk**, **Toggle**, or **Always On**.
+*   **Input Mode:** Choose between **Push-to-Talk**, **Toggle**, or **Always On**. (PRESS 'T' TO ACTIVATE YOUR MICROPHONE)
 *   **Mic Threshold:** Adjust this if your mic is picking up breathing or keyboard clicks.
 *   **Spatial Audio:**
     *   **Min Distance:** How close you need to be for 100% volume.
