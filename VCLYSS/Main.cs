@@ -571,7 +571,7 @@ namespace VCLYSS
                                     CodeTalkerNetwork.SendNetworkPacket(vm.AttachedPlayer, packet, Compressors.CompressionType.GZip, CompressionLevel.Fastest);
                                 }
                             }
-                            // Local visual feedback: Bump volume up when packets are sent
+
                             _lastVolume = Mathf.Lerp(_lastVolume, 0.8f, Time.deltaTime * 20f); 
                             if(_lipSync != null) _lipSync.SetSpeaking();
                             _lastPacketTime = Time.time; 
@@ -658,10 +658,7 @@ namespace VCLYSS
             if (_bubbleObject == null) return;
             if (!Main.CfgShowHeadIcons.Value) { _bubbleObject.SetActive(false); return; }
 
-            // Decay volume for EVERYONE (Local + Remote) so bubble disappears if they stop talking
             _lastVolume = Mathf.Lerp(_lastVolume, 0f, Time.deltaTime * 5f);
-
-            // Show bubble ONLY if volume is high enough (Implies VAD passed)
             bool showBubble = _lastVolume > 0.01f;
 
             if (showBubble)
@@ -675,7 +672,7 @@ namespace VCLYSS
             else _bubbleObject.SetActive(false);
         }
 
-        public bool IsSpeaking() => _lastVolume > 0.01f; // Simplified logic
+        public bool IsSpeaking() => _lastVolume > 0.01f;
 
         private void CheckLocalPlayerStatus()
         {

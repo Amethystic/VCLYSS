@@ -11,14 +11,13 @@
         <CreateThunderstorePackage>true</CreateThunderstorePackage>
         <ThunderstorePackageName>VCLYSS</ThunderstorePackageName>
         <ThunderstoreTeamName>s0apy</ThunderstoreTeamName>
-        <ThunderstorePackageDescription>Voice Chat plugin for Atlyss multiplayer.</ThunderstorePackageDescription>
+        <ThunderstorePackageDescription>Adds fully functional Proximity Voice Chat to ATLYSS. Talk to your friends, organize dungeon runs, or just hang out in the plaza with 3D spatial audio.</ThunderstorePackageDescription>
         <ThunderstoreWebsite>https://discord.gg/HgMtdpXYud</ThunderstoreWebsite>
     </PropertyGroup>
     <ItemGroup>
         <!-- Thunderstore dependency strings -->
         <ThunderstoreDependency Include="BepInEx-BepInExPack-5.4.2304" Visible="false"/>
-        <ThunderstoreDependency Include="Marioalexsan-PerfectGuard-1.1.0" Visible="false"/>
-        <ThunderstoreDependency Include="Soggy_Pancake-CodeYapper-2.0.0" Visible="false"/>
+        <ThunderstoreDependency Include="Soggy_Pancake-CodeYapper-2.1.0" Visible="false"/>
         <ThunderstoreDependency Include="Nessie-EasySettings-1.2.0" Visible="false" />
 
         <!-- Output items to include from build assemblies -->
