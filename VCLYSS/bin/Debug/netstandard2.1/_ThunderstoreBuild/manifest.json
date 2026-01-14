@@ -2,7 +2,7 @@
   "name": "VCLYSS",
   "version_number": "1.0.0",
   "website_url": "https://discord.gg/HgMtdpXYud",
-  "description": "Voice Chat plugin for Atlyss multiplayer. (In Public Testing)",
+  "description": "Voice Chat plugin for Atlyss multiplayer.",
   "dependencies": [
        "BepInEx-BepInExPack-5.4.2304","Marioalexsan-PerfectGuard-1.1.0","Soggy_Pancake-CodeYapper-2.0.0","Nessie-EasySettings-1.2.0"
   ]
