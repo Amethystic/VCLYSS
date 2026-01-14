@@ -1,15 +1,14 @@
 # Changelog
-
 <details><summary>Updates</summary>
 
-## 1.0.0 - BETA
+## 1.0.0
 - Initial release
-
 </details>
+
+
 
 <details><summary>Mini Updates</summary>
 
-## -
-- shh, I branched off HAC
-
+## BETA
+- Join discord to see beta changelogs
 </details>

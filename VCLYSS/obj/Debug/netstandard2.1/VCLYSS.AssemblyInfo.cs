@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("com.VCLYSS.sftwre")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+555b948142b1654f0c9d85c5062d1ee7e9c71739")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+2f552e6e327f7e3df766fb8af2a3ad683f8ffef1")]
 [assembly: System.Reflection.AssemblyProductAttribute("VCLYSS")]
 [assembly: System.Reflection.AssemblyTitleAttribute("VCLYSS")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -92,3 +92,13 @@ if (BepInEx.Bootstrap.Chainloader.PluginInfos.ContainsKey("com.soggy.vclyss"))
     // Use Reflection or a separate wrapper method to call the API
 }
 ```
+
+---
+
+## Credits
+Massive thanks to the people who helped make this mod possible:
+
+*   **Zera** (@origamidisaster)
+*   **Kami** (@wolfkann)
+*   **Soggy_Pancake** (@soggy_pancake)
+*   **Marioalexsan** (@marioalexsan)
