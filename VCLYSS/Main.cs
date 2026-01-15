@@ -58,9 +58,6 @@ namespace VCLYSS
             _harmony = new Harmony(ModInfo.GUID);
             _harmony.PatchAll();
 
-            // [CHANGE] Packets are NOT registered here. 
-            // They are registered by VoiceSystem after the session is fully ready.
-
             var go = new GameObject("VCLYSS_System");
             DontDestroyOnLoad(go);
             go.AddComponent<VoiceSystem>();
@@ -68,8 +65,7 @@ namespace VCLYSS
 
             Logger.LogInfo($"[{ModInfo.NAME}] Loaded. Waiting for Player...");
         }
-
-        // [FIX] Public method called by VoiceSystem when it's safe to receive data
+        
         public void RegisterPackets()
         {
             if (_packetsRegistered) return;
@@ -236,14 +232,9 @@ namespace VCLYSS
                 yield return new WaitForSeconds(0.5f);
             }
             
-            // [FIX] Wait 5 seconds to let other game packets settle
             if (Main.CfgDebugMode.Value) Main.Log.LogDebug("Player Loaded. Waiting for network to settle...");
             yield return new WaitForSeconds(5.0f);
-
-            // [FIX] Initialize before enabling
             IsSessionReady = true;
-            
-            // [FIX] Register packets now
             Main.Instance.RegisterPackets();
 
             if (Main.CfgDebugMode.Value) Main.Log.LogDebug("VCLYSS Ready: Player IN_GAME and Assets Loaded.");
@@ -751,7 +742,6 @@ namespace VCLYSS
             
             _streamingClip.SetData(_floatBuffer, 0);
 
-            // [FIX] Loop false + explicit Play to prevent looping
             _audioSource.loop = false;
 
             if (!_audioSource.isPlaying) 

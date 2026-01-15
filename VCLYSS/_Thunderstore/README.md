@@ -3,10 +3,12 @@
 
 Adds fully functional **Proximity Voice Chat** to ATLYSS. Talk to your friends, organize dungeon runs, or just hang out in the plaza with 3D spatial audio.
 
+[**Join the Discord Community**](https://discord.gg/ePhX4Fb2we)
+
 ## Features
 *   **Proximity Chat:** Voices are 3D and get quieter as players walk away.
 *   **Visual Indicators:**
-    *   **Speech Bubbles:** A bubble appears over a player's head when they talk.
+    *   **Speech Bubbles:** A 3D bubble appears over a player's head when they talk.
     *   **Overlay:** See who is talking in the UI.
     *   **Lip Sync:** Player mouths move when they speak!
 *   **Host Safety:** The mod automatically checks if the Lobby Host has VCLYSS installed. If they don't, the mod disables itself to prevent connection issues.
@@ -22,12 +24,14 @@ Adds fully functional **Proximity Voice Chat** to ATLYSS. Talk to your friends, 
 ## Settings
 Press **F1** (or your Mod Settings bind) to configure:
 
-*   **Input Mode:** Choose between **Push-to-Talk**, **Toggle**, or **Always On**. (PRESS 'T' TO ACTIVATE YOUR MICROPHONE)
+*   **Input Mode:** Choose between **Push-to-Talk**, **Toggle**, or **Always On**. (Default Key: **T**)
 *   **Mic Threshold:** Adjust this if your mic is picking up breathing or keyboard clicks.
 *   **Spatial Audio:**
     *   **Min Distance:** How close you need to be for 100% volume.
     *   **Max Distance:** The distance at which voices become silent.
-*   **Visuals:** Toggle the overlay, head icons, or lip sync.
+*   **Visuals:**
+    *   Toggle the overlay, head icons, or lip sync.
+    *   **Bubble Scale:** Adjust the size of the speech bubble icon.
 
 ---
 
