@@ -25,6 +25,7 @@ namespace VCLYSS
         public static Main Instance;
         internal static ManualLogSource Log;
         private Harmony _harmony;
+        private bool _packetsRegistered = false;
 
         // --- CONFIGURATION ---
         public static ConfigEntry<bool> CfgEnabled;
@@ -37,6 +38,7 @@ namespace VCLYSS
         public static ConfigEntry<float> CfgMinDistance; 
         public static ConfigEntry<float> CfgMaxDistance; 
         public static ConfigEntry<bool> CfgSpatialBlending; 
+        public static ConfigEntry<bool> CfgRetroMode; 
         public static ConfigEntry<bool> CfgShowOverlay;
         public static ConfigEntry<bool> CfgShowHeadIcons;
         public static ConfigEntry<float> CfgBubbleScale; 
@@ -57,9 +59,6 @@ namespace VCLYSS
             _harmony = new Harmony(ModInfo.GUID);
             _harmony.PatchAll();
 
-            // Register immediately (Sender check prevents flooding)
-            CodeTalkerNetwork.RegisterBinaryListener<VoicePacket>(OnVoicePacketReceived);
-
             var go = new GameObject("VCLYSS_System");
             DontDestroyOnLoad(go);
             go.AddComponent<VoiceSystem>();
@@ -68,9 +67,18 @@ namespace VCLYSS
             Logger.LogInfo($"[{ModInfo.NAME}] Loaded. Voice System Started.");
         }
 
+        public void RegisterPackets()
+        {
+            if (_packetsRegistered) return;
+            
+            CodeTalkerNetwork.RegisterBinaryListener<VoicePacket>(OnVoicePacketReceived);
+            _packetsRegistered = true;
+            
+            if (CfgDebugMode.Value) Log.LogDebug("Packet Listener Registered.");
+        }
+
         private void OnVoicePacketReceived(PacketHeader header, BinaryPacketBase packet)
         {
-            // Receiver Gate: Don't process if we aren't ready
             if (!VoiceSystem.Instance || !VoiceSystem.Instance.IsSessionReady) return;
 
             if (packet is VoicePacket voicePkt)
@@ -81,11 +89,6 @@ namespace VCLYSS
                 {
                     if (CfgDebugMode.Value) Main.Log.LogWarning($"[Security] Dropped oversized packet from {header.SenderID}");
                     return;
-                }
-
-                if (CfgDebugMode.Value)
-                {
-                    Main.Log.LogDebug($"[Flow] Recv Packet | Sender: {header.SenderID} | Size: {voicePkt.VoiceData.Length}");
                 }
 
                 VoiceSystem.Instance.RoutePacket(header.SenderID, voicePkt.VoiceData);
@@ -106,6 +109,7 @@ namespace VCLYSS
             CfgMinDistance = Config.Bind("3. Spatial", "Min Distance", 5.0f, new ConfigDescription("Distance where audio is 100% volume", new AcceptableValueRange<float>(1.0f, 50.0f)));
             CfgMaxDistance = Config.Bind("3. Spatial", "Max Distance", 40.0f, new ConfigDescription("Distance where audio becomes silent", new AcceptableValueRange<float>(10.0f, 256.0f)));
             CfgSpatialBlending = Config.Bind("3. Spatial", "3D Spatial Audio", true, "Enable 3D Directional Audio");
+            CfgRetroMode = Config.Bind("3. Spatial", "COD Lobby Quality", false, "Degrades audio quality to simulate an Xbox 360 mic");
             
             CfgShowOverlay = Config.Bind("4. Visuals", "Show Voice Overlay", true, "Show list of speakers in top right");
             CfgShowHeadIcons = Config.Bind("4. Visuals", "Show Head Icons (Bubble)", true, "Show GMod-style bubble");
@@ -131,6 +135,7 @@ namespace VCLYSS
             tab.AddToggle(CfgSpatialBlending);
             tab.AddSlider(CfgMinDistance);
             tab.AddSlider(CfgMaxDistance);
+            tab.AddToggle(CfgRetroMode);
             tab.AddHeader("Visuals");
             tab.AddToggle(CfgShowOverlay);
             tab.AddToggle(CfgShowHeadIcons);
@@ -201,7 +206,6 @@ namespace VCLYSS
             StartCoroutine(PlayerScanner());
         }
 
-        // Called by Harmony Patch
         public void SetSessionReady(bool ready)
         {
             if (ready)
@@ -216,31 +220,72 @@ namespace VCLYSS
             }
         }
 
+        // [FIX] Resync: Call FullReset instead of Destroy
+        public void ResyncPlayer(Player p)
+        {
+            if (p == null) return;
+            if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[Resync] Resetting voice for {p._nickname}");
+            
+            // Check for duplicates
+            var vms = p.GetComponents<VoiceManager>();
+            if (vms.Length > 1)
+            {
+                // Nuke duplicates, keep first
+                for (int i = 1; i < vms.Length; i++) Destroy(vms[i]);
+            }
+
+            if (vms.Length > 0)
+            {
+                vms[0].FullReset();
+                if (!ActiveManagers.Contains(vms[0])) ActiveManagers.Add(vms[0]);
+            }
+            else
+            {
+                // No manager found, add one
+                p.gameObject.AddComponent<VoiceManager>();
+            }
+        }
+
+        // [FIX] Resync All: Call FullReset on everyone
+        public void ResyncAll()
+        {
+            if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[Resync] Local Map Change Detected. Resetting ALL audio.");
+
+            // Prune nulls first
+            ActiveManagers.RemoveAll(vm => vm == null);
+
+            foreach(var vm in ActiveManagers)
+            {
+                vm.FullReset();
+            }
+        }
+
         private IEnumerator WaitForAssetsAndEnable()
         {
-            // Wait for visual model
             while (Player._mainPlayer == null || Player._mainPlayer._pVisual == null)
             {
                 yield return new WaitForSeconds(0.5f);
             }
             
-            // Wait for assets to settle
-            yield return new WaitForSeconds(1.0f);
+            yield return new WaitForSeconds(5.0f);
 
             IsSessionReady = true;
+            Main.Instance.RegisterPackets();
 
             if (Main.CfgDebugMode.Value) Main.Log.LogDebug("VCLYSS Ready: Player IN_GAME and Assets Loaded.");
         }
 
         private IEnumerator PlayerScanner()
         {
-            WaitForSeconds wait = new WaitForSeconds(2f);
+            WaitForSeconds wait = new WaitForSeconds(1f);
             while (true)
             {
                 try
                 {
                     if (IsSessionReady)
                     {
+                        ActiveManagers.RemoveAll(vm => vm == null);
+
                         Player[] allPlayers = FindObjectsOfType<Player>();
                         foreach (var p in allPlayers)
                         {
@@ -263,9 +308,37 @@ namespace VCLYSS
             if (senderID == GetSteamIDFromPlayer(Player._mainPlayer)) return;
 
             VoiceManager target = FindManager(senderID);
+
+            if (target == null)
+            {
+                target = TryRecoverManager(senderID);
+            }
+
             if (target != null && target.OwnerID == senderID)
             {
-                target.ReceiveNetworkData(data);
+                // Receiver-Side Map Check
+                bool allowPacket = false;
+                if (target.AttachedPlayer != null && Player._mainPlayer != null)
+                {
+                    string myMap = Player._mainPlayer._mapName;
+                    string theirMap = target.AttachedPlayer._mapName;
+
+                    if (string.Equals(myMap, theirMap))
+                    {
+                        allowPacket = true;
+                    }
+                    else
+                    {
+                        // Fallback: Proximity check
+                        float dist = Vector3.Distance(target.AttachedPlayer.transform.position, Player._mainPlayer.transform.position);
+                        if (dist < 100f) allowPacket = true;
+                    }
+                }
+
+                if (allowPacket)
+                {
+                    target.ReceiveNetworkData(data);
+                }
             }
         }
 
@@ -277,17 +350,35 @@ namespace VCLYSS
 
         private VoiceManager FindManager(ulong steamID)
         {
-            for (int i = 0; i < ActiveManagers.Count; i++)
+            for (int i = ActiveManagers.Count - 1; i >= 0; i--)
             {
+                // [FIX] Only remove if null. Do NOT remove if disabled (prevents list churn on map load)
+                if (ActiveManagers[i] == null)
+                {
+                    ActiveManagers.RemoveAt(i);
+                    continue;
+                }
+
                 if (ActiveManagers[i].OwnerID == steamID) return ActiveManagers[i];
             }
+            return null;
+        }
+
+        private VoiceManager TryRecoverManager(ulong steamID)
+        {
             Player[] players = FindObjectsOfType<Player>();
             foreach(var p in players) 
             {
                 if (GetSteamIDFromPlayer(p) == steamID)
                 {
                     var vm = p.GetComponent<VoiceManager>();
-                    if (vm == null) vm = p.gameObject.AddComponent<VoiceManager>();
+                    if (vm == null) 
+                    {
+                        if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[RoutePacket] Lazy initializing VoiceManager for {p._nickname}");
+                        vm = p.gameObject.AddComponent<VoiceManager>();
+                    }
+                    // Ensure it's tracked
+                    if (!ActiveManagers.Contains(vm)) ActiveManagers.Add(vm);
                     return vm;
                 }
             }
@@ -303,7 +394,10 @@ namespace VCLYSS
 
         public static void ApplySettingsToAll()
         {
-            foreach(var vm in ActiveManagers) vm.ApplyAudioSettings();
+            foreach(var vm in ActiveManagers) 
+            {
+                if (vm != null) vm.ApplyAudioSettings();
+            }
         }
     }
 
@@ -333,6 +427,19 @@ namespace VCLYSS
             else if (__instance.isLocalPlayer && _newCondition != GameCondition.IN_GAME)
             {
                 if (VoiceSystem.Instance != null) VoiceSystem.Instance.SetSessionReady(false);
+            }
+        }
+
+        [HarmonyPatch(typeof(Player), "OnPlayerMapInstanceChange")]
+        [HarmonyPostfix]
+        public static void OnPlayerMapInstanceChange(Player __instance, MapInstance _old, MapInstance _new)
+        {
+            if (__instance != null && VoiceSystem.Instance != null)
+            {
+                if (__instance.isLocalPlayer)
+                    VoiceSystem.Instance.ResyncAll();
+                else
+                    VoiceSystem.Instance.ResyncPlayer(__instance);
             }
         }
 
@@ -393,17 +500,24 @@ namespace VCLYSS
         private float _externalGain = 1.0f;
         private bool _externalMute = false;
         private bool? _spatialOverride = null; 
+        
+        private string _lastMapName = "";
 
         private AudioSource _audioSource;
         private GameObject _bubbleObject;
         private SpriteRenderer _bubbleRenderer;
         private LipSync _lipSync;
         
+        private AudioDistortionFilter _distortion;
+        private AudioHighPassFilter _highPass;
+        private AudioLowPassFilter _lowPass;
+
         private Vector3 _baseScale = Vector3.one;
         private static AudioMixerGroup _cachedVoiceMixer;
 
         private byte[] _compressedBuffer = new byte[8192]; 
         private byte[] _decompressedBuffer = new byte[65536]; 
+        private byte[] _tempDecompressBuffer = new byte[65536];
 
         private float[] _floatBuffer; 
         private int _writePos = 0;
@@ -449,6 +563,8 @@ namespace VCLYSS
             _audioInitialized = true;
             CheckLocalPlayerStatus();
             
+            if (AttachedPlayer != null) _lastMapName = AttachedPlayer._mapName;
+            
             if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[Manager] Initialized for {AttachedPlayer._nickname}");
         }
 
@@ -458,6 +574,48 @@ namespace VCLYSS
         {
             VoiceSystem.ActiveManagers.Remove(this);
             if (IsLocalPlayer && _isRecording) SteamUser.StopVoiceRecording();
+            
+            if (_bubbleObject != null) Destroy(_bubbleObject);
+            if (_audioSource != null && _audioSource.gameObject != null) Destroy(_audioSource.gameObject);
+            if (_lipSync != null) Destroy(_lipSync);
+        }
+
+        // [FIX] Full Reset Logic: Restarts audio system without destroying component
+        public void FullReset()
+        {
+            if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[VoiceManager] Full Reset for {AttachedPlayer?._nickname}");
+            
+            if (_audioSource != null)
+            {
+                _audioSource.Stop();
+                _audioSource.timeSamples = 0;
+                _audioSource.loop = false;
+            }
+
+            Array.Clear(_floatBuffer, 0, _floatBuffer.Length);
+            _writePos = 0;
+            if (_streamingClip != null) _streamingClip.SetData(_floatBuffer, 0);
+
+            _lastVolume = 0f;
+            _isPlaying = false;
+            _lastPacketTime = Time.time;
+
+            if (IsLocalPlayer && _isRecording)
+            {
+                SteamUser.StopVoiceRecording();
+                _isRecording = false;
+            }
+            
+            // Re-acquire bubble parent in case it changed
+            if (AttachedPlayer != null && _bubbleObject != null)
+            {
+                 Transform nativeBubble = AttachedPlayer.transform.Find("_playerEffects/_effect_chatBubble");
+                 if (nativeBubble != null)
+                 {
+                     _bubbleObject.transform.SetParent(nativeBubble, false);
+                     _bubbleObject.transform.localPosition = Vector3.zero;
+                 }
+            }
         }
 
         public void SetExternalGain(float gain) { _externalGain = gain; }
@@ -478,6 +636,18 @@ namespace VCLYSS
             _audioSource.loop = false; 
             _audioSource.playOnAwake = false;
             _audioSource.dopplerLevel = 0f; 
+
+            _distortion = emitter.AddComponent<AudioDistortionFilter>();
+            _distortion.distortionLevel = 0.6f;
+            _distortion.enabled = false;
+
+            _highPass = emitter.AddComponent<AudioHighPassFilter>();
+            _highPass.cutoffFrequency = 1500f;
+            _highPass.enabled = false;
+
+            _lowPass = emitter.AddComponent<AudioLowPassFilter>();
+            _lowPass.cutoffFrequency = 4000f;
+            _lowPass.enabled = false;
 
             if (_cachedVoiceMixer == null)
             {
@@ -562,18 +732,42 @@ namespace VCLYSS
             
             _audioSource.volume = 1.0f; 
             
+            bool retro = Main.CfgRetroMode.Value;
+            if (_distortion != null) _distortion.enabled = retro;
+            if (_highPass != null) _highPass.enabled = retro;
+            if (_lowPass != null) _lowPass.enabled = retro;
+
             if (IsLocalPlayer) 
             {
                 _audioSource.spatialBlend = 0f; 
             }
             else
             {
-                bool useSpatial = _spatialOverride.HasValue ? _spatialOverride.Value : Main.CfgSpatialBlending.Value;
+                bool useSpatial = true;
+
+                if (_spatialOverride.HasValue)
+                {
+                    useSpatial = _spatialOverride.Value;
+                }
+                else
+                {
+                    useSpatial = Main.CfgSpatialBlending.Value;
+                }
                 
-                _audioSource.spatialBlend = useSpatial ? 1.0f : 0.0f;
-                _audioSource.minDistance = Main.CfgMinDistance.Value;
-                _audioSource.maxDistance = Main.CfgMaxDistance.Value;
-                _audioSource.rolloffMode = AudioRolloffMode.Linear; 
+                if (useSpatial)
+                {
+                    _audioSource.spatialBlend = 1.0f;
+                    _audioSource.minDistance = Main.CfgMinDistance.Value;
+                    _audioSource.maxDistance = Main.CfgMaxDistance.Value;
+                    _audioSource.rolloffMode = AudioRolloffMode.Linear; 
+                }
+                else
+                {
+                    _audioSource.spatialBlend = 0.0f;
+                    _audioSource.minDistance = 10000f; 
+                    _audioSource.maxDistance = 100000f;
+                    _audioSource.rolloffMode = AudioRolloffMode.Linear;
+                }
             }
         }
 
@@ -581,6 +775,16 @@ namespace VCLYSS
         {
             if (!Main.CfgEnabled.Value || !_audioInitialized) return;
             if (!VoiceSystem.Instance.IsSessionReady) return;
+
+            // Auto-Repair
+            if (_audioSource == null) InitializeAudio();
+
+            // Detect Map Change and Reset
+            if (AttachedPlayer != null && AttachedPlayer._mapName != _lastMapName)
+            {
+                _lastMapName = AttachedPlayer._mapName;
+                FullReset();
+            }
 
             if (!IsLocalPlayer) CheckLocalPlayerStatus();
             if (!VoiceSystem.IsVoiceAllowedInLobby && !Main.CfgMicTest.Value) return;
@@ -644,39 +848,79 @@ namespace VCLYSS
 
                     if (res == EVoiceResult.k_EVoiceResultOK && bytesWritten > 0)
                     {
-                        byte[] packetData = new byte[bytesWritten];
-                        Array.Copy(_compressedBuffer, packetData, bytesWritten);
+                        uint decompressedBytes;
+                        EVoiceResult decompRes = SteamUser.DecompressVoice(_compressedBuffer, bytesWritten, _tempDecompressBuffer, (uint)_tempDecompressBuffer.Length, out decompressedBytes, (uint)_sampleRate);
 
-                        if (Main.CfgMicTest.Value)
+                        float maxVol = 0f;
+                        if (decompRes == EVoiceResult.k_EVoiceResultOK && decompressedBytes > 0)
                         {
-                            ReceiveNetworkData(packetData); 
+                            for (int i = 0; i < decompressedBytes / 2; i++)
+                            {
+                                short val = BitConverter.ToInt16(_tempDecompressBuffer, i * 2);
+                                float floatVal = val / 32768.0f;
+                                if (Mathf.Abs(floatVal) > maxVol) maxVol = Mathf.Abs(floatVal);
+                            }
+                        }
+
+                        if (maxVol >= Main.CfgMicThreshold.Value)
+                        {
+                            byte[] packetData = new byte[bytesWritten];
+                            Array.Copy(_compressedBuffer, packetData, bytesWritten);
+
+                            if (Main.CfgMicTest.Value)
+                            {
+                                ReceiveNetworkData(packetData); 
+                            }
+                            else
+                            {
+                                var packet = new VoicePacket(packetData);
+                                foreach(var vm in VoiceSystem.ActiveManagers)
+                                {
+                                    if (vm != this && vm.AttachedPlayer != null)
+                                    {
+                                        if (IsPlayerLoaded(vm.AttachedPlayer))
+                                        {
+                                            // [FIX] Sender-Side Map Check with Proximity Fallback
+                                            bool shouldSend = false;
+                                            if (Player._mainPlayer != null)
+                                            {
+                                                string myMap = Player._mainPlayer._mapName;
+                                                string theirMap = vm.AttachedPlayer._mapName;
+                                                
+                                                if (string.Equals(myMap, theirMap))
+                                                {
+                                                    shouldSend = true;
+                                                }
+                                                else
+                                                {
+                                                    float dist = Vector3.Distance(vm.AttachedPlayer.transform.position, Player._mainPlayer.transform.position);
+                                                    if (dist < 100f) shouldSend = true;
+                                                }
+                                            }
+
+                                            if (shouldSend)
+                                            {
+                                                CodeTalkerNetwork.SendNetworkPacket(vm.AttachedPlayer, packet, Compressors.CompressionType.GZip, CompressionLevel.Fastest);
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                _lastVolume = Mathf.Lerp(_lastVolume, maxVol, Time.deltaTime * 20f); 
+                                if(_lipSync != null) _lipSync.SetSpeaking();
+                                _lastPacketTime = Time.time; 
+                                if (!_isPlaying) { _isPlaying = true; } 
+                            }
                         }
                         else
                         {
-                            var packet = new VoicePacket(packetData);
-                            foreach(var vm in VoiceSystem.ActiveManagers)
-                            {
-                                if (vm != this && vm.AttachedPlayer != null)
-                                {
-                                    // [FIX] Sender Check: Don't send to players who haven't loaded their visuals
-                                    if (IsPlayerLoaded(vm.AttachedPlayer))
-                                    {
-                                        CodeTalkerNetwork.SendNetworkPacket(vm.AttachedPlayer, packet, Compressors.CompressionType.GZip, CompressionLevel.Fastest);
-                                    }
-                                }
-                            }
-                            
-                            _lastVolume = Mathf.Lerp(_lastVolume, 0.8f, Time.deltaTime * 20f); 
-                            if(_lipSync != null) _lipSync.SetSpeaking();
-                            _lastPacketTime = Time.time; 
-                            if (!_isPlaying) { _isPlaying = true; } 
+                            _lastVolume = Mathf.Lerp(_lastVolume, 0f, Time.deltaTime * 20f);
                         }
                     }
                 }
             }
         }
 
-        // [FIX] Helper to check if a player has their visual assets loaded
         private bool IsPlayerLoaded(Player p)
         {
             if (p == null) return false;
