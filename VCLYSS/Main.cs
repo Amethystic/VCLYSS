@@ -242,7 +242,8 @@ namespace VCLYSS
             else
             {
                 // No manager found, add one
-                p.gameObject.AddComponent<VoiceManager>();
+                var vm = p.gameObject.AddComponent<VoiceManager>();
+                ActiveManagers.Add(vm);
             }
         }
 
@@ -287,12 +288,55 @@ namespace VCLYSS
                         ActiveManagers.RemoveAll(vm => vm == null);
 
                         Player[] allPlayers = FindObjectsOfType<Player>();
-                        foreach (var p in allPlayers)
+                        if (Player._mainPlayer != null)
                         {
-                            if (p != null && p.GetComponent<VoiceManager>() == null)
+                            string localMap = Player._mainPlayer._mapName;
+
+                            foreach (var p in allPlayers)
                             {
-                                if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[Scanner] Attaching VoiceManager to {p._nickname}");
-                                p.gameObject.AddComponent<VoiceManager>();
+                                // [FIX] ALWAYS handle Local Player
+                                if (p == Player._mainPlayer)
+                                {
+                                    var localVM = p.GetComponent<VoiceManager>();
+                                    if (localVM == null)
+                                    {
+                                        localVM = p.gameObject.AddComponent<VoiceManager>();
+                                        if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[Scanner] Added Local Manager");
+                                    }
+                                    if (!ActiveManagers.Contains(localVM)) ActiveManagers.Add(localVM);
+                                    continue;
+                                }
+
+                                // Handle Remote Players
+                                bool sameMap = string.Equals(p._mapName, localMap);
+                                
+                                // Fallback: Distance check (if strings haven't synced yet)
+                                if (!sameMap)
+                                {
+                                    float dist = Vector3.Distance(p.transform.position, Player._mainPlayer.transform.position);
+                                    if (dist < 100f) sameMap = true;
+                                }
+
+                                var vm = p.GetComponent<VoiceManager>();
+
+                                if (sameMap)
+                                {
+                                    if (vm == null)
+                                    {
+                                        if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[Scanner] Adding Manager for {p._nickname} (Same Map/Close)");
+                                        vm = p.gameObject.AddComponent<VoiceManager>();
+                                    }
+                                    if (!ActiveManagers.Contains(vm)) ActiveManagers.Add(vm);
+                                }
+                                else
+                                {
+                                    if (vm != null)
+                                    {
+                                        if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[Scanner] Removing Manager for {p._nickname} (Different Map)");
+                                        ActiveManagers.Remove(vm);
+                                        Destroy(vm);
+                                    }
+                                }
                             }
                         }
                     }
@@ -352,8 +396,7 @@ namespace VCLYSS
         {
             for (int i = ActiveManagers.Count - 1; i >= 0; i--)
             {
-                // [FIX] Only remove if null. Do NOT remove if disabled (prevents list churn on map load)
-                if (ActiveManagers[i] == null)
+                if (ActiveManagers[i] == null || ActiveManagers[i].AttachedPlayer == null)
                 {
                     ActiveManagers.RemoveAt(i);
                     continue;
@@ -377,7 +420,6 @@ namespace VCLYSS
                         if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[RoutePacket] Lazy initializing VoiceManager for {p._nickname}");
                         vm = p.gameObject.AddComponent<VoiceManager>();
                     }
-                    // Ensure it's tracked
                     if (!ActiveManagers.Contains(vm)) ActiveManagers.Add(vm);
                     return vm;
                 }
@@ -580,7 +622,6 @@ namespace VCLYSS
             if (_lipSync != null) Destroy(_lipSync);
         }
 
-        // [FIX] Full Reset Logic: Restarts audio system without destroying component
         public void FullReset()
         {
             if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[VoiceManager] Full Reset for {AttachedPlayer?._nickname}");
@@ -606,7 +647,6 @@ namespace VCLYSS
                 _isRecording = false;
             }
             
-            // Re-acquire bubble parent in case it changed
             if (AttachedPlayer != null && _bubbleObject != null)
             {
                  Transform nativeBubble = AttachedPlayer.transform.Find("_playerEffects/_effect_chatBubble");
@@ -848,73 +888,52 @@ namespace VCLYSS
 
                     if (res == EVoiceResult.k_EVoiceResultOK && bytesWritten > 0)
                     {
-                        uint decompressedBytes;
-                        EVoiceResult decompRes = SteamUser.DecompressVoice(_compressedBuffer, bytesWritten, _tempDecompressBuffer, (uint)_tempDecompressBuffer.Length, out decompressedBytes, (uint)_sampleRate);
+                        byte[] packetData = new byte[bytesWritten];
+                        Array.Copy(_compressedBuffer, packetData, bytesWritten);
 
-                        float maxVol = 0f;
-                        if (decompRes == EVoiceResult.k_EVoiceResultOK && decompressedBytes > 0)
+                        if (Main.CfgMicTest.Value)
                         {
-                            for (int i = 0; i < decompressedBytes / 2; i++)
-                            {
-                                short val = BitConverter.ToInt16(_tempDecompressBuffer, i * 2);
-                                float floatVal = val / 32768.0f;
-                                if (Mathf.Abs(floatVal) > maxVol) maxVol = Mathf.Abs(floatVal);
-                            }
-                        }
-
-                        if (maxVol >= Main.CfgMicThreshold.Value)
-                        {
-                            byte[] packetData = new byte[bytesWritten];
-                            Array.Copy(_compressedBuffer, packetData, bytesWritten);
-
-                            if (Main.CfgMicTest.Value)
-                            {
-                                ReceiveNetworkData(packetData); 
-                            }
-                            else
-                            {
-                                var packet = new VoicePacket(packetData);
-                                foreach(var vm in VoiceSystem.ActiveManagers)
-                                {
-                                    if (vm != this && vm.AttachedPlayer != null)
-                                    {
-                                        if (IsPlayerLoaded(vm.AttachedPlayer))
-                                        {
-                                            // [FIX] Sender-Side Map Check with Proximity Fallback
-                                            bool shouldSend = false;
-                                            if (Player._mainPlayer != null)
-                                            {
-                                                string myMap = Player._mainPlayer._mapName;
-                                                string theirMap = vm.AttachedPlayer._mapName;
-                                                
-                                                if (string.Equals(myMap, theirMap))
-                                                {
-                                                    shouldSend = true;
-                                                }
-                                                else
-                                                {
-                                                    float dist = Vector3.Distance(vm.AttachedPlayer.transform.position, Player._mainPlayer.transform.position);
-                                                    if (dist < 100f) shouldSend = true;
-                                                }
-                                            }
-
-                                            if (shouldSend)
-                                            {
-                                                CodeTalkerNetwork.SendNetworkPacket(vm.AttachedPlayer, packet, Compressors.CompressionType.GZip, CompressionLevel.Fastest);
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                _lastVolume = Mathf.Lerp(_lastVolume, maxVol, Time.deltaTime * 20f); 
-                                if(_lipSync != null) _lipSync.SetSpeaking();
-                                _lastPacketTime = Time.time; 
-                                if (!_isPlaying) { _isPlaying = true; } 
-                            }
+                            ReceiveNetworkData(packetData); 
                         }
                         else
                         {
-                            _lastVolume = Mathf.Lerp(_lastVolume, 0f, Time.deltaTime * 20f);
+                            var packet = new VoicePacket(packetData);
+                            foreach(var vm in VoiceSystem.ActiveManagers)
+                            {
+                                if (vm != this && vm.AttachedPlayer != null)
+                                {
+                                    if (IsPlayerLoaded(vm.AttachedPlayer))
+                                    {
+                                        // [FIX] Sender-Side Map Check with Proximity Fallback
+                                        bool shouldSend = false;
+                                        if (Player._mainPlayer != null)
+                                        {
+                                            string myMap = Player._mainPlayer._mapName;
+                                            string theirMap = vm.AttachedPlayer._mapName;
+                                            
+                                            if (string.Equals(myMap, theirMap))
+                                            {
+                                                shouldSend = true;
+                                            }
+                                            else
+                                            {
+                                                float dist = Vector3.Distance(vm.AttachedPlayer.transform.position, Player._mainPlayer.transform.position);
+                                                if (dist < 100f) shouldSend = true;
+                                            }
+                                        }
+
+                                        if (shouldSend)
+                                        {
+                                            CodeTalkerNetwork.SendNetworkPacket(vm.AttachedPlayer, packet, Compressors.CompressionType.GZip, CompressionLevel.Fastest);
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            _lastVolume = Mathf.Lerp(_lastVolume, 0.8f, Time.deltaTime * 20f); 
+                            if(_lipSync != null) _lipSync.SetSpeaking();
+                            _lastPacketTime = Time.time; 
+                            if (!_isPlaying) { _isPlaying = true; } 
                         }
                     }
                 }
@@ -925,7 +944,7 @@ namespace VCLYSS
         {
             if (p == null) return false;
             if (p._pVisual == null) return false;
-            if (p._pVisual._playerRaceModel == null) return false; 
+            // Relaxed check for visual readiness
             return true;
         }
 
