@@ -1,6 +1,13 @@
 # Changelog
 <details><summary>Updates</summary>
 
+## 1.2.1
+### 🛠️ Bug Fixes
+*   **Fixed "Silent Return" Bug:** Fixed a critical issue where players would lose the ability to hear or speak to others after leaving a map instance (dungeon/hub) and coming back. The audio system now performs a full "hard reset" on map transitions to ensure a clean connection.
+*   **Fixed "Zombie" Voice Bubbles:** Fixed an issue where voice bubbles would detach or duplicate when a player re-entered a zone, sometimes leaving floating icons behind.
+*   **Fixed Bubble Positioning:** Ensure voice bubbles always re-attach to the correct player bone after a map transition, keeping them aligned with the player's head.
+*   **Improved Stability:** Added additional safety checks during scene loading to prevent rare crashes when joining a laggy lobby.
+
 ## 1.2.0
 ### 🛠️ Critical Stability Fixes
 *   **Fixed "Mute on Return" Bug:** Implemented a robust **Resync System**. When players switch maps or return to a previous zone, their audio engines are automatically reset, ensuring they can be heard immediately without needing to rejoin the lobby.

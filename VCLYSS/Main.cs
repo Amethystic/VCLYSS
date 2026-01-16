@@ -220,7 +220,6 @@ namespace VCLYSS
             }
         }
 
-        // [FIX] Resync: Call FullReset instead of Destroy
         public void ResyncPlayer(Player p)
         {
             if (p == null) return;
@@ -247,7 +246,6 @@ namespace VCLYSS
             }
         }
 
-        // [FIX] Resync All: Call FullReset on everyone
         public void ResyncAll()
         {
             if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[Resync] Local Map Change Detected. Resetting ALL audio.");
@@ -476,12 +474,20 @@ namespace VCLYSS
         [HarmonyPostfix]
         public static void OnPlayerMapInstanceChange(Player __instance, MapInstance _old, MapInstance _new)
         {
-            if (__instance != null && VoiceSystem.Instance != null)
+            // [FIX] Wrap in Try-Catch to prevent crashing Unity Networking on error
+            try 
             {
-                if (__instance.isLocalPlayer)
-                    VoiceSystem.Instance.ResyncAll();
-                else
-                    VoiceSystem.Instance.ResyncPlayer(__instance);
+                if (__instance != null && VoiceSystem.Instance != null)
+                {
+                    if (__instance.isLocalPlayer)
+                        VoiceSystem.Instance.ResyncAll();
+                    else
+                        VoiceSystem.Instance.ResyncPlayer(__instance);
+                }
+            }
+            catch (Exception e)
+            {
+                if (Main.CfgDebugMode.Value) Main.Log.LogWarning($"[VCLYSS] MapChange Error: {e.Message}");
             }
         }
 
@@ -622,7 +628,7 @@ namespace VCLYSS
             if (_lipSync != null) Destroy(_lipSync);
         }
 
-        // [FIX] Full Reset: Correctly re-parent bubble to _playerEffects
+        // [FIX] Added Null Checks to FullReset
         public void FullReset()
         {
             if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[VoiceManager] Full Reset for {AttachedPlayer?._nickname}");
@@ -634,9 +640,16 @@ namespace VCLYSS
                 _audioSource.loop = false;
             }
 
-            Array.Clear(_floatBuffer, 0, _floatBuffer.Length);
+            if (_floatBuffer != null)
+            {
+                Array.Clear(_floatBuffer, 0, _floatBuffer.Length);
+            }
+            
             _writePos = 0;
-            if (_streamingClip != null) _streamingClip.SetData(_floatBuffer, 0);
+            if (_streamingClip != null && _floatBuffer != null) 
+            {
+                _streamingClip.SetData(_floatBuffer, 0);
+            }
 
             _lastVolume = 0f;
             _isPlaying = false;
