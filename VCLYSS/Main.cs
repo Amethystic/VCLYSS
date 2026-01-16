@@ -294,7 +294,7 @@ namespace VCLYSS
 
                             foreach (var p in allPlayers)
                             {
-                                // [FIX] ALWAYS handle Local Player
+                                // ALWAYS handle Local Player
                                 if (p == Player._mainPlayer)
                                 {
                                     var localVM = p.GetComponent<VoiceManager>();
@@ -622,6 +622,7 @@ namespace VCLYSS
             if (_lipSync != null) Destroy(_lipSync);
         }
 
+        // [FIX] Full Reset: Correctly re-parent bubble to _playerEffects
         public void FullReset()
         {
             if (Main.CfgDebugMode.Value) Main.Log.LogDebug($"[VoiceManager] Full Reset for {AttachedPlayer?._nickname}");
@@ -649,11 +650,13 @@ namespace VCLYSS
             
             if (AttachedPlayer != null && _bubbleObject != null)
             {
+                 Transform playerEffects = AttachedPlayer.transform.Find("_playerEffects");
                  Transform nativeBubble = AttachedPlayer.transform.Find("_playerEffects/_effect_chatBubble");
-                 if (nativeBubble != null)
+                 
+                 if (playerEffects != null && nativeBubble != null)
                  {
-                     _bubbleObject.transform.SetParent(nativeBubble, false);
-                     _bubbleObject.transform.localPosition = Vector3.zero;
+                     _bubbleObject.transform.SetParent(playerEffects, false);
+                     _bubbleObject.transform.localPosition = nativeBubble.localPosition;
                  }
             }
         }
@@ -888,52 +891,53 @@ namespace VCLYSS
 
                     if (res == EVoiceResult.k_EVoiceResultOK && bytesWritten > 0)
                     {
-                        byte[] packetData = new byte[bytesWritten];
-                        Array.Copy(_compressedBuffer, packetData, bytesWritten);
+                        uint decompressedBytes;
+                        EVoiceResult decompRes = SteamUser.DecompressVoice(_compressedBuffer, bytesWritten, _tempDecompressBuffer, (uint)_tempDecompressBuffer.Length, out decompressedBytes, (uint)_sampleRate);
 
-                        if (Main.CfgMicTest.Value)
+                        float maxVol = 0f;
+                        if (decompRes == EVoiceResult.k_EVoiceResultOK && decompressedBytes > 0)
                         {
-                            ReceiveNetworkData(packetData); 
-                        }
-                        else
-                        {
-                            var packet = new VoicePacket(packetData);
-                            foreach(var vm in VoiceSystem.ActiveManagers)
+                            for (int i = 0; i < decompressedBytes / 2; i++)
                             {
-                                if (vm != this && vm.AttachedPlayer != null)
-                                {
-                                    if (IsPlayerLoaded(vm.AttachedPlayer))
-                                    {
-                                        // [FIX] Sender-Side Map Check with Proximity Fallback
-                                        bool shouldSend = false;
-                                        if (Player._mainPlayer != null)
-                                        {
-                                            string myMap = Player._mainPlayer._mapName;
-                                            string theirMap = vm.AttachedPlayer._mapName;
-                                            
-                                            if (string.Equals(myMap, theirMap))
-                                            {
-                                                shouldSend = true;
-                                            }
-                                            else
-                                            {
-                                                float dist = Vector3.Distance(vm.AttachedPlayer.transform.position, Player._mainPlayer.transform.position);
-                                                if (dist < 100f) shouldSend = true;
-                                            }
-                                        }
+                                short val = BitConverter.ToInt16(_tempDecompressBuffer, i * 2);
+                                float floatVal = val / 32768.0f;
+                                if (Mathf.Abs(floatVal) > maxVol) maxVol = Mathf.Abs(floatVal);
+                            }
+                        }
 
-                                        if (shouldSend)
+                        if (maxVol >= Main.CfgMicThreshold.Value)
+                        {
+                            byte[] packetData = new byte[bytesWritten];
+                            Array.Copy(_compressedBuffer, packetData, bytesWritten);
+
+                            if (Main.CfgMicTest.Value)
+                            {
+                                ReceiveNetworkData(packetData); 
+                            }
+                            else
+                            {
+                                var packet = new VoicePacket(packetData);
+                                foreach(var vm in VoiceSystem.ActiveManagers)
+                                {
+                                    if (vm != this && vm.AttachedPlayer != null)
+                                    {
+                                        if (IsPlayerLoaded(vm.AttachedPlayer))
                                         {
+                                            // [FIX] Sender-Side: Send to everyone. Receiver filters by map.
                                             CodeTalkerNetwork.SendNetworkPacket(vm.AttachedPlayer, packet, Compressors.CompressionType.GZip, CompressionLevel.Fastest);
                                         }
                                     }
                                 }
+                                
+                                _lastVolume = Mathf.Lerp(_lastVolume, maxVol, Time.deltaTime * 20f); 
+                                if(_lipSync != null) _lipSync.SetSpeaking();
+                                _lastPacketTime = Time.time; 
+                                if (!_isPlaying) { _isPlaying = true; } 
                             }
-                            
-                            _lastVolume = Mathf.Lerp(_lastVolume, 0.8f, Time.deltaTime * 20f); 
-                            if(_lipSync != null) _lipSync.SetSpeaking();
-                            _lastPacketTime = Time.time; 
-                            if (!_isPlaying) { _isPlaying = true; } 
+                        }
+                        else
+                        {
+                            _lastVolume = Mathf.Lerp(_lastVolume, 0f, Time.deltaTime * 20f);
                         }
                     }
                 }
@@ -1001,6 +1005,7 @@ namespace VCLYSS
             
             _streamingClip.SetData(_floatBuffer, 0);
 
+            // [FIX] Loop false + explicit Play to prevent looping
             _audioSource.loop = false;
 
             if (!_audioSource.isPlaying) 

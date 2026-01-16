@@ -1,6 +1,21 @@
 # Changelog
 <details><summary>Updates</summary>
 
+## 1.2.0
+### 🛠️ Critical Stability Fixes
+*   **Fixed "Mute on Return" Bug:** Implemented a robust **Resync System**. When players switch maps or return to a previous zone, their audio engines are automatically reset, ensuring they can be heard immediately without needing to rejoin the lobby.
+
+### ✨ Visuals & UI
+*   **Microphone Status Indicator:** Added a new UI element in the bottom right corner.
+    *   Shows **[MIC OPEN]** (Green) when transmitting.
+    *   Shows **[MIC CLOSED]** (Red) when muted or PTT key is not held.
+*   **System Status:** Added a **"VCLYSS: READY"** indicator to confirm when the voice system has successfully initialized.
+*   **Bubble Fixes:** Fixed the speech bubble attaching to the wrong position after map changes. It now correctly follows the player's head height across all races.
+
+### ⚙️ Logic Improvements
+*   **Map Isolation:** You will now strictly only hear players who are in the same Map Instance (Dungeon/Hub) as you.
+*   **Proximity Fallback:** Added a fail-safe that allows you to hear players if they are physically close to you, even if the server hasn't fully synced their map status yet.
+
 ## 1.1.0
 ### 🔧 Critical Fixes
 *   **Fixed "Naked Player" Bug:** Completely overhauled the initialization logic. The mod now waits for the game to fully load player assets (clothes/skin) before processing network packets. This prevents the thread-blocking issue that caused players to spawn as floating heads or without equipment.
