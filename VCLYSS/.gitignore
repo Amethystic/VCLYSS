@@ -1,0 +1,41 @@
+# Unity generated files
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+
+# Never ignore Asset meta files (extremely important!)
+!/[Aa]ssets/**/*.meta
+
+# Visual Studio / Rider / IDE files
+.vs/
+*.csproj
+*.sln
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.opendb
+*.VC.db
+ExportedObj/
+.consulo/
+
+# Builds & packages
+*.apk
+*.unitypackage
+
+# OS specific
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# Optional: if you really hate seeing these regenerated every time
+*.csproj.user
+*.sln.docstates
