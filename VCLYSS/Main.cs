@@ -936,8 +936,8 @@ namespace VCLYSS
                                     {
                                         if (IsPlayerLoaded(vm.AttachedPlayer))
                                         {
-                                            // [FIX] Sender-Side: Send to everyone. Receiver filters by map.
-                                            CodeTalkerNetwork.SendNetworkPacket(vm.AttachedPlayer, packet, Compressors.CompressionType.GZip, CompressionLevel.Fastest);
+                                            // [FIX] Sender-Side: Send to everyone. Receiver filters by map
+                                            CodeTalkerNetwork.SendNetworkPacket(vm.AttachedPlayer, packet);
                                         }
                                     }
                                 }

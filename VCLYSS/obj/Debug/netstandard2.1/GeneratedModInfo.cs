@@ -6,6 +6,6 @@ namespace VCLYSS
     {
         public const string GUID = "com.VCLYSS.sftwre";
         public const string NAME = "VCLYSS";
-        public const string VERSION = "1.2.1";
+        public const string VERSION = "1.2.2";
     }
 }
