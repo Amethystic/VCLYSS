@@ -1,6 +1,10 @@
 # Changelog
 <details><summary>Updates</summary>
 
+## 1.2.2
+### 🛠️ Updates
+*   **Updated Dependencies:** Codeyapper v2.2.0.
+
 ## 1.2.1
 ### 🛠️ Bug Fixes
 *   **Fixed "Silent Return" Bug:** Fixed a critical issue where players would lose the ability to hear or speak to others after leaving a map instance (dungeon/hub) and coming back. The audio system now performs a full "hard reset" on map transitions to ensure a clean connection.
