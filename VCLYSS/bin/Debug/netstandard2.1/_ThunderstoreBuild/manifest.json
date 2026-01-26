@@ -1,9 +1,9 @@
 {
   "name": "VCLYSS",
-  "version_number": "1.2.2",
+  "version_number": "1.2.3",
   "website_url": "https://discord.gg/HgMtdpXYud",
   "description": "Adds fully functional Proximity Voice Chat to ATLYSS. Talk to your friends, organize dungeon runs, or just hang out in the plaza with 3D spatial audio.",
   "dependencies": [
-       "BepInEx-BepInExPack-5.4.2304","Soggy_Pancake-CodeYapper-2.1.0","Nessie-EasySettings-1.2.1"
+       "BepInEx-BepInExPack-5.4.2304","Soggy_Pancake-CodeYapper-2.2.0","Nessie-EasySettings-1.2.1"
   ]
 }

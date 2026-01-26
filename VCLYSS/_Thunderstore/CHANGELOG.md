@@ -1,8 +1,11 @@
 # Changelog
 <details><summary>Updates</summary>
 
-## 1.2.2
+## 1.2.3
 ### 🛠️ Updates
+*   Recompiled 1.2.2 varient
+
+## 1.2.2
 *   **Updated Dependencies:** Codeyapper v2.2.0.
 
 ## 1.2.1
